@@ -1,0 +1,1 @@
+$ sudo xbps-install portmidi portmidi-devel SDL2 SDL2-devel
