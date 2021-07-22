@@ -1,0 +1,16 @@
+[
+    {
+        "arguments": [
+            "gcc",
+            "-c",
+            "-D_REENTRANT",
+            "-I/usr/include/SDL2",
+            "-I/usr/include",
+            "-o",
+            "keiko",
+            "keiko.c"
+        ],
+        "directory": "/home/schmidh/Gitrepos/keiko",
+        "file": "keiko.c"
+    }
+]
