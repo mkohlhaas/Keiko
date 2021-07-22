@@ -1,7 +1,9 @@
 .PHONY: all clean
 
-all:
-	gcc $$(pkg-config --cflags --libs sdl2) -I/usr/include -L/usr/lib -lportmidi -o keiko keiko.c
+all: keiko
+
+keiko: keiko.c
+	gcc $$(pkg-config --cflags --libs sdl2) -I/usr/include -L/usr/lib -lportmidi -o $@ $<
 
 clean:
-	rm keiko
+	@rm -f keiko
