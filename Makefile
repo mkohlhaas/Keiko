@@ -4,6 +4,13 @@ binaries = keiko midiseq
 
 .PHONY: all clean
 
+# Build mode for project: DEBUG or RELEASE
+BUILD_MODE            ?= DEBUG
+
+ifeq ($(BUILD_MODE),DEBUG)
+    CFLAGS += -g -pg
+endif
+
 all: $(binaries)
 
 clean:
