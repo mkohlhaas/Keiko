@@ -1,9 +1,10 @@
+CFLAGS  += $(shell pkg-config --cflags sdl2 jack)
+LDFLAGS += $(shell pkg-config --libs   sdl2 jack) -lportmidi
+binaries = keiko midiseq
+
 .PHONY: all clean
 
-all: keiko
-
-keiko: keiko.c
-	gcc $$(pkg-config --cflags --libs sdl2) -I/usr/include -L/usr/lib -lportmidi -o $@ $<
+all: $(binaries)
 
 clean:
-	@rm -f keiko
+	@rm -f $(binaries) 
