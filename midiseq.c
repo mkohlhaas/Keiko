@@ -97,7 +97,7 @@ int main(int narg, char **args)
 		return 1;
 	}
 	jack_set_process_callback (client, process, 0);
-	output_port = jack_port_register (client, "out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+	output_port = jack_port_register (client, "midi-out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
 	nframes = jack_get_buffer_size(client);
 	loop_index = 0;
 	num_notes = (narg - 3)/3;
@@ -119,19 +119,11 @@ int main(int narg, char **args)
 	}
 
 	/* install a signal handler to properly quits jack client */
-#ifndef WIN32
-	signal(SIGQUIT, signal_handler);
-	signal(SIGHUP, signal_handler);
-#endif
 	signal(SIGTERM, signal_handler);
 	signal(SIGINT, signal_handler);
 
 	/* run until interrupted */
-#ifdef WIN32
-	Sleep(-1);
-#else
 	sleep(-1);
-#endif
 
 	jack_client_close(client);
 	exit (0);

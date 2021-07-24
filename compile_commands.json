@@ -1,16 +1,47 @@
 [
     {
         "arguments": [
-            "gcc",
+            "cc",
             "-c",
             "-D_REENTRANT",
             "-I/usr/include/SDL2",
-            "-I/usr/include",
+            "-g",
+            "-pg",
+            "-o",
+            "midiseq",
+            "midiseq.c"
+        ],
+        "directory": "/home/schmidh/Gitrepos/keiko",
+        "file": "midiseq.c"
+    },
+    {
+        "arguments": [
+            "cc",
+            "-c",
+            "-D_REENTRANT",
+            "-I/usr/include/SDL2",
+            "-g",
+            "-pg",
             "-o",
             "keiko",
             "keiko.c"
         ],
         "directory": "/home/schmidh/Gitrepos/keiko",
         "file": "keiko.c"
+    },
+    {
+        "arguments": [
+            "cc",
+            "-c",
+            "-D_REENTRANT",
+            "-I/usr/include/SDL2",
+            "-g",
+            "-pg",
+            "-o",
+            "midisine",
+            "midisine.c"
+        ],
+        "directory": "/home/schmidh/Gitrepos/keiko",
+        "file": "midisine.c"
     }
 ]
