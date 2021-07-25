@@ -8,7 +8,7 @@ binaries = keiko midiseq midisine
 BUILD_MODE            ?= DEBUG
 
 ifeq ($(BUILD_MODE),DEBUG)
-    CFLAGS += -g -pg
+    CFLAGS += -g -pg -O0
 endif
 
 all: $(binaries)
