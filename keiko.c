@@ -1,7 +1,9 @@
 #include <stdio.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <SDL2/SDL.h>
-#include <portmidi.h>
-#include <porttime.h>
+#include <jack/jack.h>
+#include <jack/midiport.h>
 
 /* 
 Copyright (c) 2020 Devine Lu Linvega
@@ -43,11 +45,15 @@ typedef struct {
 
 typedef struct {
 	int chn, val, vel, len;
+	bool trigger;
 } MidiNote;
+
+jack_client_t *client;
+jack_port_t *output_port;
 
 Document doc;
 char clip[CLIPSZ];
-MidiNote voices[VOICES];
+MidiNote voices[VOICES] = { 0 };
 Rect2d cursor;
 
 int WIDTH = 8 * HOR + PAD * 8 * 2;
@@ -153,9 +159,12 @@ SDL_Window *gWindow = NULL;
 SDL_Renderer *gRenderer = NULL;
 SDL_Texture *gTexture = NULL;
 Uint32 *pixels;
-PmStream *midi;
 
-#pragma mark - HELPERS
+void
+signal_handler(int sig) {
+  jack_client_close(client);
+  fprintf(stderr, "signal received, exiting ...\n");
+}
 
 int
 clmp(int val, int min, int max)
@@ -248,8 +257,6 @@ scpy(char *src, char *dst, int len)
 	return dst;
 }
 
-#pragma mark - IO
-
 char
 getcell(Grid *g, int x, int y)
 {
@@ -315,69 +322,78 @@ getbang(Grid *g, int x, int y)
 	return getcell(g, x - 1, y) == '*' || getcell(g, x + 1, y) == '*' || getcell(g, x, y - 1) == '*' || getcell(g, x, y + 1) == '*';
 }
 
-#pragma mark - MIDI
-
-MidiNote *
-sendmidi(int chn, int val, int vel, int len)
+void
+note_on_off(MidiNote* n, bool on)
 {
-	int i = 0;
-	/* Detrigger */
-	for(i = 0; i < VOICES; ++i) {
-		MidiNote *n = &voices[i];
-		if(!n->len || n->chn != chn || n->val != val)
-			continue;
-		Pm_WriteShort(midi,
-			Pt_Time(),
-			Pm_Message(0x90 + n->chn, n->val, 0));
-		n->len = 0;
-	}
-	/* Trigger */
-	for(i = 0; i < VOICES; ++i) {
-		MidiNote *n = &voices[i];
-		if(n->len < 1) {
-			n->chn = chn;
-			n->val = val;
-			n->vel = vel;
-			n->len = len;
-			Pm_WriteShort(midi,
-				Pt_Time(),
-				Pm_Message(0x90 + chn, val, vel * 3));
-			return n;
-		}
-	}
-	return NULL;
+  void *port_buf = jack_port_get_buffer(output_port, 0);
+  jack_midi_clear_buffer(port_buf);
+  unsigned char *buffer = jack_midi_event_reserve(port_buf, 0, 3);
+  buffer[0] = (on ? 0x90 : 0x80) + n->chn;
+  buffer[1] = n->val;
+  buffer[2] = n->vel;
 }
 
 void
-runmidi(void)
+note_on(MidiNote* n)
+{
+  note_on_off(n, true);
+}
+
+void
+note_off(MidiNote* n)
+{
+  note_on_off(n, false);
+}
+
+int
+process(jack_nframes_t nframes, void *arg) {
+	for(int i = 0; i < VOICES; ++i) {
+		MidiNote *n = &voices[i];
+		if(n->trigger) {
+			note_on(n);
+			n->trigger = false;
+		}
+		if(n->len) {
+			n->len--;
+			if(!n->len)
+				note_off(n);
+		}
+	}
+  return 0;
+}
+
+void
+sendmidi(int chn, int val, int vel, int len)
 {
 	int i;
 	for(i = 0; i < VOICES; ++i) {
 		MidiNote *n = &voices[i];
-		if(n->len > 0) {
-			n->len--;
-			if(n->len == 0)
-				Pm_WriteShort(midi,
-					Pt_Time(),
-					Pm_Message(0x90 + n->chn, n->val, 0));
+		if(!n->len) {
+			n->chn = chn;
+			n->val = val;
+			n->vel = vel;
+			n->len = len;
+			n->trigger = true;
+			break;
 		}
 	}
+	if(i == VOICES) fprintf(stderr, "Could not find emtpy slot!");
 }
 
 void
 initmidi(void)
 {
-	int i;
-	Pm_Initialize();
-	for(i = 0; i < Pm_CountDevices(); ++i)
-		printf("Device #%d -> %s%s\n",
-			i,
-			Pm_GetDeviceInfo(i)->name,
-			i == DEVICE ? "[x]" : "[ ]");
-	Pm_OpenOutput(&midi, DEVICE, NULL, 128, 0, NULL, 1);
+  if ((client = jack_client_open("Keiko", JackNullOption, NULL)) == 0) {
+    fprintf(stderr, "JACK server not running?\n");
+    exit(1);
+  }
+  jack_set_process_callback(client, process, 0);
+  output_port = jack_port_register(client, "midi-out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+  if (jack_activate(client)) {
+    fprintf(stderr, "cannot activate client");
+	exit(1);
+  }
 }
-
-#pragma mark - LIBRARY
 
 void
 opa(Grid *g, int x, int y, char c)
@@ -792,8 +808,6 @@ operate(Grid *g, int x, int y, char c)
 	}
 }
 
-#pragma mark - GRID
-
 void
 initgridframe(Grid *g)
 {
@@ -840,8 +854,6 @@ initgrid(Grid *g, int w, int h)
 		setcell(g, i % g->w, i / g->w, '.');
 	initgridframe(g);
 }
-
-#pragma mark - DRAW
 
 int
 getfont(int x, int y, char c, int type, int sel)
@@ -949,8 +961,6 @@ redraw(Uint32 *dst)
 	SDL_RenderCopy(gRenderer, gTexture, NULL, NULL);
 	SDL_RenderPresent(gRenderer);
 }
-
-#pragma mark - OPTIONS
 
 int
 error(char *msg, const char *err)
@@ -1093,7 +1103,6 @@ frame(void)
 {
 	rungrid(&doc.grid);
 	redraw(pixels);
-	runmidi();
 }
 
 void
@@ -1123,8 +1132,6 @@ quit(void)
 	SDL_Quit();
 	exit(0);
 }
-
-#pragma mark - CLIP
 
 void
 copyclip(Rect2d *r, char *c)
@@ -1172,8 +1179,6 @@ moveclip(Rect2d *r, char *c, int x, int y, int skip)
 	move(x, y, skip);
 	pasteclip(r, c, 0);
 }
-
-#pragma mark - TRIGGERS
 
 void
 domouse(SDL_Event *event)

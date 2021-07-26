@@ -56,10 +56,7 @@ static void note_on_off(jack_nframes_t nframes, int i, int j, bool on) {
   unsigned char *buffer = jack_midi_event_reserve(port_buf, i, 3);
   buffer[2] = 64; /* velocity */
   buffer[1] = note_frqs[j];
-  if (on)
-    buffer[0] = 0x80; /* note on  */
-  else
-    buffer[0] = 0x90; /* note off */
+  buffer[0] = on ? 0x80 : 0x90;
 }
 
 static void note_on(jack_nframes_t nframes, int i, int j) {
