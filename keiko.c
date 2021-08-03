@@ -291,7 +291,7 @@ int process(jack_nframes_t nframes, void* arg) {
 }
 
 void sendmidi(int chn, int val, int vel, int len) {
-  MidiNote* n = &voices[chn - 1];
+  MidiNote* n = &voices[chn];
   if (n->len)
     n->prev_val = n->val;
   else
@@ -309,8 +309,7 @@ void initmidi(void) {
     exit(1);
   }
   jack_set_process_callback(client, process, 0);
-  output_port = jack_port_register(client, "midi-out", JACK_DEFAULT_MIDI_TYPE,
-                                   JackPortIsOutput, 0);
+  output_port = jack_port_register(client, "midi-out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
   if (jack_activate(client)) {
     fprintf(stderr, "cannot activate client");
     exit(1);
@@ -602,7 +601,7 @@ void opmidi(Grid* g, int x, int y) {
   if (vel == '.') vel = 'z';
   len = getport(g, x + 5, y, 1);
   if (getbang(g, x, y)) {
-    sendmidi(clmp(chn, 1, VOICES), 12 * oct + ctbl(nte), clmp(cb36(vel), 0, 36),
+    sendmidi(clmp(chn, 0, VOICES - 1), 12 * oct + ctbl(nte), clmp(cb36(vel), 0, 36),
              clmp(cb36(len), 1, 36));
     settype(g, x, y, 3);
   } else

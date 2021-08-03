@@ -1,5 +1,5 @@
 CFLAGS  += $(shell pkg-config --cflags sdl2 jack)
-LDFLAGS += $(shell pkg-config --libs   sdl2 jack) -lportmidi -lm
+LDFLAGS += $(shell pkg-config --libs   sdl2 jack) -lm
 binaries = keiko midiseq midisine
 
 .PHONY: all clean
@@ -8,7 +8,7 @@ binaries = keiko midiseq midisine
 BUILD_MODE            ?= DEBUG
 
 ifeq ($(BUILD_MODE),DEBUG)
-    CFLAGS += -g -pg -O0
+    CFLAGS += -g -pg
 endif
 
 all: $(binaries)
