@@ -282,7 +282,7 @@ int process(jack_nframes_t nframes, void* arg) {
         buffer = jack_midi_event_reserve(port_buf, 0, 3);
         buffer[0] = 0x90 + i;
         buffer[1] = n->val;
-        buffer[2] = n->vel;
+        buffer[2] = n->vel * 3;
         n->trigger = false;
       }
     }
@@ -292,7 +292,6 @@ int process(jack_nframes_t nframes, void* arg) {
 
 void sendmidi(int chn, int val, int vel, int len) {
   MidiNote* n = &voices[chn - 1];
-  fprintf(stderr, "Midi note pointer: %p\n", n);
   if (n->len)
     n->prev_val = n->val;
   else
@@ -793,7 +792,6 @@ void drawui(Uint32* dst) {
     if (voices[i].len) n++;
   drawicon(dst, 13 * 8, bottom, n > 0 ? icons[2 + clmp(n, 0, 6)] : font[70], 2,
            0);
-  fprintf(stderr, "Number of occupied slots: %d\n", n);
   /* generics */
   drawicon(dst, 15 * 8, bottom, icons[GUIDES ? 10 : 9], GUIDES ? 1 : 2, 0);
   drawicon(dst, (HOR - 1) * 8, bottom, icons[11], doc.unsaved ? 2 : 3, 0);
