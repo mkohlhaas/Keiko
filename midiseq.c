@@ -41,13 +41,16 @@ static void signal_handler(int sig) {
 }
 
 static void usage() {
-  fprintf(stderr, "usage: jack_midiseq name nsamp [startindex note nsamp] "
-                  "...... [startindex note nsamp]\n");
+  fprintf(stderr,
+          "usage: jack_midiseq name nsamp [startindex note nsamp] "
+          "...... [startindex note nsamp]\n");
   fprintf(stderr, "eg: jack_midiseq Sequencer 24000 0 60 8000 12000 63 8000\n");
-  fprintf(stderr, "will play a 1/2 sec loop (if srate is 48khz) with a c4 note "
-                  "at the start of the loop\n");
-  fprintf(stderr, "that lasts for 8000 samples, then a d4# that starts at 1/4 "
-                  "sec that lasts for 8000 samples\n");
+  fprintf(stderr,
+          "will play a 1/2 sec loop (if srate is 48khz) with a c4 note "
+          "at the start of the loop\n");
+  fprintf(stderr,
+          "that lasts for 8000 samples, then a d4# that starts at 1/4 "
+          "sec that lasts for 8000 samples\n");
 }
 
 static void note_on_off(jack_nframes_t nframes, int i, int j, bool on) {
