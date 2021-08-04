@@ -326,6 +326,7 @@ void initmidi(void) {
   }
   voices = malloc(sizeof(MidiList));
   voices->next = NULL;
+  voices->note = (MidiNote){};
 }
 
 void opa(Grid* g, int x, int y, char c) {
@@ -782,7 +783,6 @@ void drawicon(Uint32* dst, int x, int y, Uint8* icon, int fg, int bg) {
 
 void drawui(Uint32* dst) {
   int i, n = get_list_length(), bottom = VER * 8 + 8;
-  fprintf(stderr, "Number of Notes: %d\n", n);
   /* cursor */
   drawicon(dst, 0 * 8, bottom, font[cursor.x % 36], 1, 0);
   drawicon(dst, 1 * 8, bottom, font[68], 1, 0);
