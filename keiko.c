@@ -44,16 +44,21 @@ typedef struct {
 } Rect2d;
 
 typedef struct {
-  int chn, val, vel, len, prev_val;
+  int chn, val, vel, len;
   bool trigger;
 } MidiNote;
+
+typedef struct MidiList {
+  MidiNote note;
+  struct MidiList* next;
+} MidiList;
 
 jack_client_t* client;
 jack_port_t* output_port;
 
 Document doc;
 char clip[CLIPSZ];
-MidiNote voices[VOICES] = {0};
+MidiList* voices = NULL;
 Rect2d cursor;
 
 int WIDTH = 8 * HOR + PAD * 8 * 2;
@@ -253,55 +258,58 @@ int getbang(Grid* g, int x, int y) {
          getcell(g, x, y - 1) == '*' || getcell(g, x, y + 1) == '*';
 }
 
+size_t get_list_length() {
+  size_t n = 0;
+  MidiList* list = voices;
+
+  while (list->next) {
+    n++;
+    list = list->next;
+  }
+  return n;
+}
+
 int process(jack_nframes_t nframes, void* arg) {
   jack_midi_data_t* buffer;
-  MidiNote* n;
   void* port_buf = jack_port_get_buffer(output_port, 1);
   jack_midi_clear_buffer(port_buf);
-  for (size_t i = 0; i < VOICES; ++i) {
-    n = &voices[i];
-    if (n->len && !n->trigger) {
+
+  MidiList* iter = voices;
+  while (iter->next) {
+    MidiNote* n = &iter->next->note;
+    if (n->trigger) {
+      n->trigger = false;
+      buffer = jack_midi_event_reserve(port_buf, 0, 3);
+      buffer[0] = 0x90 + n->chn;
+      buffer[1] = n->val;
+      buffer[2] = n->vel;
+    } else {
       n->len--;
       if (!n->len) {
         buffer = jack_midi_event_reserve(port_buf, 0, 3);
-        buffer[0] = 0x80 + i;
+        buffer[0] = 0x80 + n->chn;
         buffer[1] = n->val;
         buffer[2] = 0;
+        MidiList* note_to_delete = iter->next;
+        iter->next = iter->next->next;
+        free(note_to_delete);
+        continue;
       }
     }
-    for (size_t i = 0; i < VOICES; ++i) {
-      n = &voices[i];
-      if (n->trigger) {
-        if (n->prev_val != -1) {
-          buffer = jack_midi_event_reserve(port_buf, 0, 3);
-          buffer[0] = 0x80 + i;
-          buffer[1] = n->prev_val;
-          buffer[2] = 0;
-          n->prev_val = -1;
-        }
-        buffer = jack_midi_event_reserve(port_buf, 0, 3);
-        buffer[0] = 0x90 + i;
-        buffer[1] = n->val;
-        buffer[2] = n->vel;
-        n->trigger = false;
-      }
-    }
+    iter = iter->next;
   }
   return 0;
 }
 
 void sendmidi(int chn, int val, int vel, int len) {
-  MidiNote* n = &voices[chn - 1];
-  fprintf(stderr, "Midi note pointer: %p\n", n);
-  if (n->len)
-    n->prev_val = n->val;
-  else
-    n->prev_val = -1;
-  n->chn = chn;
-  n->val = val;
-  n->vel = vel;
-  n->len = len;
-  n->trigger = true;
+  MidiList* ml = malloc(sizeof(MidiList));
+  ml->next = voices->next;
+  voices->next = ml;
+  ml->note.chn = chn;
+  ml->note.val = val;
+  ml->note.vel = vel * 3;
+  ml->note.len = len;
+  ml->note.trigger = true;
 }
 
 void initmidi(void) {
@@ -316,6 +324,9 @@ void initmidi(void) {
     fprintf(stderr, "cannot activate client");
     exit(1);
   }
+  voices = malloc(sizeof(MidiList));
+  voices->next = NULL;
+  voices->note = (MidiNote){};
 }
 
 void opa(Grid* g, int x, int y, char c) {
@@ -603,8 +614,8 @@ void opmidi(Grid* g, int x, int y) {
   if (vel == '.') vel = 'z';
   len = getport(g, x + 5, y, 1);
   if (getbang(g, x, y)) {
-    sendmidi(clmp(chn, 1, VOICES), 12 * oct + ctbl(nte), clmp(cb36(vel), 0, 36),
-             clmp(cb36(len), 1, 36));
+    sendmidi(clmp(chn, 0, VOICES - 1), 12 * oct + ctbl(nte),
+             clmp(cb36(vel), 0, 36), clmp(cb36(len), 1, 36));
     settype(g, x, y, 3);
   } else
     settype(g, x, y, 2);
@@ -771,7 +782,7 @@ void drawicon(Uint32* dst, int x, int y, Uint8* icon, int fg, int bg) {
 }
 
 void drawui(Uint32* dst) {
-  int i, n = 0, bottom = VER * 8 + 8;
+  int i, n = get_list_length(), bottom = VER * 8 + 8;
   /* cursor */
   drawicon(dst, 0 * 8, bottom, font[cursor.x % 36], 1, 0);
   drawicon(dst, 1 * 8, bottom, font[68], 1, 0);
@@ -789,11 +800,8 @@ void drawui(Uint32* dst) {
   drawicon(dst, 11 * 8, bottom, font[(BPM / 10) % 10], 1, 0);
   drawicon(dst, 12 * 8, bottom, font[BPM % 10], 1, 0);
   /* io */
-  for (i = 0; i < VOICES; ++i)
-    if (voices[i].len) n++;
   drawicon(dst, 13 * 8, bottom, n > 0 ? icons[2 + clmp(n, 0, 6)] : font[70], 2,
            0);
-  fprintf(stderr, "Number of occupied slots: %d\n", n);
   /* generics */
   drawicon(dst, 15 * 8, bottom, icons[GUIDES ? 10 : 9], GUIDES ? 1 : 2, 0);
   drawicon(dst, (HOR - 1) * 8, bottom, icons[11], doc.unsaved ? 2 : 3, 0);
