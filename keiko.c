@@ -284,8 +284,8 @@ int process(jack_nframes_t nframes, void* arg) {
       buffer[1] = n->val;
       buffer[2] = n->vel;
     } else {
-      n->len--;
-      if (!n->len) {
+      n->len -= nframes;
+      if (n->len < 0) {
         buffer = jack_midi_event_reserve(port_buf, 0, 3);
         buffer[0] = 0x80 + n->chn;
         buffer[1] = n->val;
@@ -308,7 +308,8 @@ void sendmidi(int chn, int val, int vel, int len) {
   ml->note.chn = chn;
   ml->note.val = val;
   ml->note.vel = vel * 3;
-  ml->note.len = len;
+  ml->note.len = len * 60 / (float)BPM * jack_get_sample_rate(client);
+  // fprintf(stderr, "Note length: %d\n", ml->note.len);
   ml->note.trigger = true;
 }
 
