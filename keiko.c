@@ -996,7 +996,10 @@ select1(int x, int y, int w, int h)
   if (r.x != cursor.x || 
       r.y != cursor.y || 
       r.w != cursor.w ||
-      r.h != cursor.h)    { cursor = r; redraw(pixels); }
+      r.h != cursor.h) {
+	cursor = r;
+    redraw(pixels);
+  }
 }
 
 void
