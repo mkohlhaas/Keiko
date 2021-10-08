@@ -8,7 +8,7 @@
 // ============================== Data Definitions ==============================  
 
 #define HOR     8
-#define VER     2
+#define VER     3
 #define PAD     2
 #define VOICES 16
 #define DEVICE  0
@@ -24,25 +24,26 @@ typedef unsigned char Uint8;
 // but still wrong for Keiko; needs debugging
 // TODO
 typedef enum {
-  operator,
-  haste,
-  input     = 2,
-  locked    = 4,
-  output    = 5,
+  inactive_operator  = 0,  // or simply empty
+  comments           = 1,
+  input              = 2,
+  active_operator    = 3,
+  input_locked       = 4,
+  output             = 5,
   selected,
 } Theme;
 
 typedef struct
 {
-  int   width;
-  int   height;
-  int   length;
-  int   frame;
-  int   random;
-  Uint8 var[36];
-  Uint8 data[MAXSZ];
-  Uint8 lock[MAXSZ];
-  Uint8 type[MAXSZ];
+  int    width;
+  int    height;
+  int    length;
+  int    frame;
+  int    random;       // seed value for random number generator; default = 1
+  Uint8  var[36];
+  Uint8  data[MAXSZ];
+  bool   lock[MAXSZ];
+  Uint8  type[MAXSZ];
 } Grid;
 
 typedef struct
@@ -317,8 +318,12 @@ void
 set_lock(Grid* g, int x, int y)
 {
   if (valid_position(g, x, y)) {
-    g->lock[x + (y * g->width)] = 1;
-    if (!get_type(g, x, y)) set_type(g, x, y, 1);
+    g->lock[x + (y * g->width)] = true;
+    if (!get_type(g, x, y)) {
+		// printf("########################################\n");
+		// exit(0);
+		set_type(g, x, y, 1);
+	}
   }
 }
 
@@ -762,43 +767,76 @@ void
 operate(Grid* g, int x, int y, char c)
 {
   set_type(g, x, y, 3);
-  if      (clca(c) == 'a') op_a(g, x, y);
-  else if (clca(c) == 'b') op_b(g, x, y);
-  else if (clca(c) == 'c') op_c(g, x, y);
-  else if (clca(c) == 'd') op_d(g, x, y);
-  else if (clca(c) == 'e') op_e(g, x, y, c);
-  else if (clca(c) == 'f') op_f(g, x, y);
-  else if (clca(c) == 'g') op_g(g, x, y);
-  else if (clca(c) == 'h') op_h(g, x, y);
-  else if (clca(c) == 'i') op_i(g, x, y);
-  else if (clca(c) == 'j') op_j(g, x, y, c);
-  else if (clca(c) == 'k') op_k(g, x, y);
-  else if (clca(c) == 'l') op_l(g, x, y);
-  else if (clca(c) == 'm') op_m(g, x, y);
-  else if (clca(c) == 'n') op_n(g, x, y, c);
-  else if (clca(c) == 'o') op_o(g, x, y);
-  else if (clca(c) == 'p') op_p(g, x, y);
-  else if (clca(c) == 'q') op_q(g, x, y);
-  else if (clca(c) == 'r') op_r(g, x, y);
-  else if (clca(c) == 's') op_s(g, x, y, c);
-  else if (clca(c) == 't') op_t(g, x, y);
-  else if (clca(c) == 'u') op_u(g, x, y);
-  else if (clca(c) == 'v') op_v(g, x, y);
-  else if (clca(c) == 'w') op_w(g, x, y, c);
-  else if (clca(c) == 'x') op_x(g, x, y);
-  else if (clca(c) == 'y') op_y(g, x, y, c);
-  else if (clca(c) == 'z') op_z(g, x, y);
-  else if (clca(c) == '*') set_cell(g, x, y, '.');
-  else if (clca(c) == '#') op_comment(g, x, y);
-  else if (clca(c) == ':') op_midi(g, x, y);
+  if      (clca(c) == 'a') op_a(g, x, y);             // add(a b)             Outputs sum of inputs.        
+  else if (clca(c) == 'b') op_b(g, x, y);             // subtract(a b)        Outputs difference of inputs.
+  else if (clca(c) == 'c') op_c(g, x, y);             // clock(rate mod)      Outputs modulo of frame.
+  else if (clca(c) == 'd') op_d(g, x, y);             // delay(rate mod)      Bangs on modulo of frame.
+  else if (clca(c) == 'e') op_e(g, x, y, c);          // east                 Moves eastward, or bangs.
+  else if (clca(c) == 'f') op_f(g, x, y);             // if(a b)              Bangs if inputs are equal.
+  else if (clca(c) == 'g') op_g(g, x, y);             // generator(x y len)   Writes operands with offset.
+  else if (clca(c) == 'h') op_h(g, x, y);             // halt                 Halts southward operand.
+  else if (clca(c) == 'i') op_i(g, x, y);             // increment(step mod)  Increments southward operand.
+  else if (clca(c) == 'j') op_j(g, x, y, c);          // jumper(val)          Outputs northward operand.
+  else if (clca(c) == 'k') op_k(g, x, y);             // konkat(len)          Reads multiple variables.
+  else if (clca(c) == 'l') op_l(g, x, y);             // less(a b)            Outputs smallest of inputs.
+  else if (clca(c) == 'm') op_m(g, x, y);             // multiply(a b)        Outputs product of inputs.
+  else if (clca(c) == 'n') op_n(g, x, y, c);          // north                Moves Northward, or bangs.
+  else if (clca(c) == 'o') op_o(g, x, y);             // read(x y read)       Reads operand with offset.
+  else if (clca(c) == 'p') op_p(g, x, y);             // push(len key val)    Writes eastward operand.
+  else if (clca(c) == 'q') op_q(g, x, y);             // query(x y len)       Reads operands with offset.
+  else if (clca(c) == 'r') op_r(g, x, y);             // random(min max)      Outputs random value.
+  else if (clca(c) == 's') op_s(g, x, y, c);          // south                Moves southward, or bangs.
+  else if (clca(c) == 't') op_t(g, x, y);             // track(key len val)   Reads eastward operand.
+  else if (clca(c) == 'u') op_u(g, x, y);             // uclid(step max)      Bangs on Euclidean rhythm.
+  else if (clca(c) == 'v') op_v(g, x, y);             // variable(write read) Reads and writes variable.
+  else if (clca(c) == 'w') op_w(g, x, y, c);          // west                 Moves westward, or bangs.
+  else if (clca(c) == 'x') op_x(g, x, y);             // write(x y val)       Writes operand with offset.
+  else if (clca(c) == 'y') op_y(g, x, y, c);          // jymper(val)          Outputs westward operand.
+  else if (clca(c) == 'z') op_z(g, x, y);             // lerp(rate target)    Transitions operand to input.
+  else if (clca(c) == '*') set_cell(g, x, y, '.');    // bang                 Bangs neighboring operands.
+  else if (clca(c) == '#') op_comment(g, x, y);       // comment              Halts a line.
+  else if (clca(c) == ':') op_midi(g, x, y);          // midi                 Sends a MIDI note.
   else                     printf("Unknown operator[%d,%d]: %c\n", x, y, c);
+}
+
+void
+print_grid_data(Grid* g)
+{
+  for (int j = 0; j < g->height; j++) {
+    for (int i = 0; i < g->width; i++)
+      printf("%c", get_cell(g, i, j));
+    putchar('\n');
+  }
+  printf("========================================\n");
+}
+
+void
+print_grid_lock(Grid* g)
+{
+  for (int y = 0; y < g->height; y++) {
+    for (int x = 0; x < g->width; x++)
+      printf("%c", g->lock[x + y * g->width] ? '*' : '.');
+    putchar('\n');
+  }
+  printf("========================================\n");
+}
+
+void
+print_grid_type(Grid* g)
+{
+  for (int y = 0; y < g->height; y++) {
+    for (int x = 0; x < g->width; x++)
+      printf("%d", g->type[x + y * g->width]);
+    putchar('\n');
+  }
+  printf("========================================\n");
 }
 
 void
 init_grid_frame(Grid* g)
 {
   for (int i = 0; i < g->length; ++i) {
-    g->lock[i] = 0;
+    g->lock[i] = false;
     g->type[i] = 0;
   }
   for (int i = 0; i < 36; ++i)
@@ -809,6 +847,7 @@ int
 run_grid(Grid* g)
 {
   init_grid_frame(g);
+  print_grid_type(g);
   for (int i = 0; i < g->length; ++i) {
     char c = g->data[i];
     int  x = i % g->width;
@@ -818,6 +857,7 @@ run_grid(Grid* g)
     if (c >= 'a' && c <= 'z' && !get_bang(g, x, y)) continue;
     operate(g, x, y, c);
   }
+  print_grid_type(g);
   g->frame++;
   return 1;
 }
