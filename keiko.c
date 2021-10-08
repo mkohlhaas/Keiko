@@ -5,11 +5,13 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define HOR 8
-#define VER 2
-#define PAD 2
+// ============================== Data Definitions ==============================  
+
+#define HOR     8
+#define VER     2
+#define PAD     2
 #define VOICES 16
-#define DEVICE 0
+#define DEVICE  0
 
 #define SZ     (HOR * VER * 16)
 #define CLIPSZ (HOR * VER) + VER + 1
@@ -24,16 +26,23 @@ typedef unsigned char Uint8;
 typedef enum {
   operator,
   haste,
-  input,
-  output,
+  input     = 2,
+  locked    = 4,
+  output    = 5,
   selected,
-  locked,
 } Theme;
 
 typedef struct
 {
-  int   w, h, l, f, r;  // w = width, h = height, l = length, f = frame, r = random(seed)
-  Uint8 var[36], data[MAXSZ], lock[MAXSZ], type[MAXSZ];
+  int   width;
+  int   height;
+  int   length;
+  int   frame;
+  int   random;
+  Uint8 var[36];
+  Uint8 data[MAXSZ];
+  Uint8 lock[MAXSZ];
+  Uint8 type[MAXSZ];
 } Grid;
 
 typedef struct
@@ -45,12 +54,16 @@ typedef struct
 
 typedef struct
 {
-  int x, y, w, h;
+  int x, y;
+  int w, h; // width, height
 } Rect2d;
 
 typedef struct
 {
-  int  chn, val, vel, len;
+  int  chn; 
+  int  val; 
+  int  vel; 
+  int  len;
   bool trigger;
 } MidiNote;
 
@@ -61,6 +74,8 @@ typedef struct midi_list
   MidiNote  note;
   MidiList* next;
 } MidiList;
+
+// ============================== Global Variables ==============================  
 
 jack_client_t* client;
 jack_port_t*   output_port;
@@ -170,6 +185,8 @@ SDL_Renderer* gRenderer = NULL;
 SDL_Texture*  gTexture  = NULL;
 Uint32*       pixels;
 
+// ============================== Functions ==============================  
+
 void
 signal_handler(int sig)
 {
@@ -183,7 +200,7 @@ clamp(int val, int min, int max)
   return (val >= min) ? ((val <= max) ? val : max) : min;
 }
 
-// is c special character
+// is c special character?
 bool
 cisp(char c)
 {
@@ -237,7 +254,7 @@ cdec(char c)
 bool
 valid_position(Grid* g, int x, int y)
 {
-  return x >= 0 && x <= g->w - 1 && y >= 0 && y <= g->h - 1;
+  return x >= 0 && x <= g->width - 1 && y >= 0 && y <= g->height - 1;
 }
 
 int
@@ -271,7 +288,7 @@ scpy(char* src, char* dst, int len)
 char
 get_cell(Grid* g, int x, int y)
 {
-  if (valid_position(g, x, y)) return g->data[x + (y * g->w)];
+  if (valid_position(g, x, y)) return g->data[x + (y * g->width)];
   return '.';
 }
 
@@ -279,13 +296,13 @@ void
 set_cell(Grid* g, int x, int y, char c)
 {
   if (valid_position(g, x, y) && valid_character(c))
-    g->data[x + (y * g->w)] = c;
+    g->data[x + (y * g->width)] = c;
 }
 
 int
 get_type(Grid* g, int x, int y)
 {
-  if (valid_position(g, x, y)) return g->type[x + (y * g->w)];
+  if (valid_position(g, x, y)) return g->type[x + (y * g->width)];
   return 0;
 }
 
@@ -293,14 +310,14 @@ void
 set_type(Grid* g, int x, int y, int t)
 {
   if (valid_position(g, x, y))
-    g->type[x + (y * g->w)] = t;
+    g->type[x + (y * g->width)] = t;
 }
 
 void
 set_lock(Grid* g, int x, int y)
 {
   if (valid_position(g, x, y)) {
-    g->lock[x + (y * g->w)] = 1;
+    g->lock[x + (y * g->width)] = 1;
     if (!get_type(g, x, y)) set_type(g, x, y, 1);
   }
 }
@@ -314,9 +331,9 @@ set_port(Grid* g, int x, int y, char c)
 }
 
 int
-get_port(Grid* g, int x, int y, int l)
+get_port(Grid* g, int x, int y, bool lock)
 {
-  if (l) {
+  if (lock) {
     set_lock(g, x, y);
     set_type(g, x, y, 4);
   } else {
@@ -414,54 +431,52 @@ init_midi()
   voices->note = (MidiNote){};
 }
 
+// ============================== Operators ==============================  
+
 void
-op_a(Grid* g, int x, int y, char c)
+op_a(Grid* g, int x, int y)
 {
-  char a = get_port(g, x - 1, y, 0);
-  char b = get_port(g, x + 1, y, 1);
+  char a = get_port(g, x - 1, y, false);
+  char b = get_port(g, x + 1, y, true);
   set_port(g, x, y + 1, cchr(cb36(a) + cb36(b), b));
-  (void)c;
 }
 
 void
-op_b(Grid* g, int x, int y, char c)
+op_b(Grid* g, int x, int y)
 {
-  char a = get_port(g, x - 1, y, 0);
-  char b = get_port(g, x + 1, y, 1);
+  char a = get_port(g, x - 1, y, false);
+  char b = get_port(g, x + 1, y, true);
   set_port(g, x, y + 1, cchr(cb36(a) - cb36(b), b));
-  (void)c;
 }
 
 void
-op_c(Grid* g, int x, int y, char c)
+op_c(Grid* g, int x, int y)
 {
-  char rate  = get_port(g, x - 1, y, 0);
-  char mod   = get_port(g, x + 1, y, 1);
+  char rate  = get_port(g, x - 1, y, false);
+  char mod   = get_port(g, x + 1, y, true);
   int  mod_  = cb36(mod);
   int  rate_ = cb36(rate);
   if (!rate_) rate_ = 1;
   if (!mod_)  mod_  = 8;
-  set_port(g, x, y + 1, cchr(g->f / rate_ % mod_, mod));
-  (void)c;
+  set_port(g, x, y + 1, cchr(g->frame / rate_ % mod_, mod));
 }
 
 void
-op_d(Grid* g, int x, int y, char c)
+op_d(Grid* g, int x, int y)
 {
-  char rate  = get_port(g, x - 1, y, 0);
-  char mod   = get_port(g, x + 1, y, 1);
+  char rate  = get_port(g, x - 1, y, false);
+  char mod   = get_port(g, x + 1, y, true);
   int  rate_ = cb36(rate);
   int  mod_  = cb36(mod);
   if (!rate_) rate_ = 1;
   if (!mod_)  mod_  = 8;
-  set_port(g, x, y + 1, g->f % (rate_ * mod_) == 0 ? '*' : '.');
-  (void)c;
+  set_port(g, x, y + 1, g->frame % (rate_ * mod_) == 0 ? '*' : '.');
 }
 
 void
 op_e(Grid* g, int x, int y, char c)
 {
-  if (x >= g->w - 1 || get_cell(g, x + 1, y) != '.')
+  if (x >= g->width - 1 || get_cell(g, x + 1, y) != '.')
     set_cell(g, x, y, '*');
   else {
     set_cell(g, x,     y, '.');
@@ -472,53 +487,49 @@ op_e(Grid* g, int x, int y, char c)
 }
 
 void
-op_f(Grid* g, int x, int y, char c)
+op_f(Grid* g, int x, int y)
 {
-  char a = get_port(g, x - 1, y, 0);
-  char b = get_port(g, x + 1, y, 1);
+  char a = get_port(g, x - 1, y, false);
+  char b = get_port(g, x + 1, y, true);
   set_port(g, x, y + 1, a == b ? '*' : '.');
-  (void)c;
 }
 
 void
-op_g(Grid* g, int x, int y, char c)
+op_g(Grid* g, int x, int y)
 {
-  char px     = get_port(g, x - 3, y, 0);
-  char py     = get_port(g, x - 2, y, 0);
-  char len    = get_port(g, x - 1, y, 0);
+  char px     = get_port(g, x - 3, y, false);
+  char py     = get_port(g, x - 2, y, false);
+  char len    = get_port(g, x - 1, y, false);
   int len_    = cb36(len);
   if (!len_) len_ = 1;
   for (int i = 0; i < len_; ++i)
-    set_port(g, x + i + cb36(px), y + 1 + cb36(py), get_port(g, x + 1 + i, y, 1));
-  (void)c;
+    set_port(g, x + i + cb36(px), y + 1 + cb36(py), get_port(g, x + 1 + i, y, true));
 }
 
 void
-op_h(Grid* g, int x, int y, char c)
+op_h(Grid* g, int x, int y)
 {
-  get_port(g, x, y + 1, 1);
-  (void)c;
+  get_port(g, x, y + 1, true);
 }
 
 void
-op_i(Grid* g, int x, int y, char c)
+op_i(Grid* g, int x, int y)
 {
-  char rate = get_port(g, x - 1, y    , 0);
-  char mod  = get_port(g, x + 1, y    , 1);
-  char val  = get_port(g, x    , y + 1, 1);
+  char rate = get_port(g, x - 1, y    , false);
+  char mod  = get_port(g, x + 1, y    , true);
+  char val  = get_port(g, x    , y + 1, true);
   int rate_ = cb36(rate);
   int mod_  = cb36(mod);
   if (!rate_) rate_ = 1;
   if (!mod_)  mod_  = 36;
   set_port(g, x, y + 1, cchr((cb36(val) + rate_) % mod_, mod));
-  (void)c;
 }
 
 void
 op_j(Grid* g, int x, int y, char c)
 {
   int i;
-  char link = get_port(g, x, y - 1, 0);
+  char link = get_port(g, x, y - 1, false);
   if (link != c) {
     for (i = 1; y + i < 256; ++i)
       if (get_cell(g, x, y + i) != c) break;
@@ -527,34 +538,31 @@ op_j(Grid* g, int x, int y, char c)
 }
 
 void
-op_k(Grid* g, int x, int y, char c)
+op_k(Grid* g, int x, int y)
 {
-  char len    = get_port(g, x - 1, y, 0);
+  char len    = get_port(g, x - 1, y, false);
   int i, len_ = cb36(len);
   if (!len_) len_ = 1;
   for (i = 0; i < len_; ++i) {
-    char key = get_port(g, x + 1 + i, y, 1);
+    char key = get_port(g, x + 1 + i, y, true);
     if (key != '.') set_port(g, x + 1 + i, y + 1, g->var[cb36(key)]);
   }
-  (void)c;
 }
 
 void
-op_l(Grid* g, int x, int y, char c)
+op_l(Grid* g, int x, int y)
 {
-  char a = get_port(g, x - 1, y, 0);
-  char b = get_port(g, x + 1, y, 1);
+  char a = get_port(g, x - 1, y, false);
+  char b = get_port(g, x + 1, y, true);
   set_port(g, x, y + 1, cb36(a) < cb36(b) ? a : b);
-  (void)c;
 }
 
 void
-op_m(Grid* g, int x, int y, char c)
+op_m(Grid* g, int x, int y)
 {
-  char a = get_port(g, x - 1, y, 0);
-  char b = get_port(g, x + 1, y, 1);
+  char a = get_port(g, x - 1, y, false);
+  char b = get_port(g, x + 1, y, true);
   set_port(g, x, y + 1, cchr(cb36(a) * cb36(b), b));
-  (void)c;
 }
 
 void
@@ -571,49 +579,46 @@ op_n(Grid* g, int x, int y, char c)
 }
 
 void
-op_o(Grid* g, int x, int y, char c)
+op_o(Grid* g, int x, int y)
 {
-  char px = get_port(g, x - 2, y, 0);
-  char py = get_port(g, x - 1, y, 0);
-  set_port(g, x, y + 1, get_port(g, x + 1 + cb36(px), y + cb36(py), 1));
-  (void)c;
+  char px = get_port(g, x - 2, y, false);
+  char py = get_port(g, x - 1, y, false);
+  set_port(g, x, y + 1, get_port(g, x + 1 + cb36(px), y + cb36(py), true));
 }
 
 void
-op_p(Grid* g, int x, int y, char c)
+op_p(Grid* g, int x, int y)
 {
-  char key = get_port(g, x - 2, y, 0);
-  char len = get_port(g, x - 1, y, 0);
-  char val = get_port(g, x + 1, y, 1);
+  char key = get_port(g, x - 2, y, false);
+  char len = get_port(g, x - 1, y, false);
+  char val = get_port(g, x + 1, y, true);
   int len_ = cb36(len);
   if (!len_) len_ = 1;
   for (int i = 0; i < len_; ++i)
     set_lock(g, x + i, y + 1);
   set_port(g, x + (cb36(key) % len_), y + 1, val);
-  (void)c;
 }
 
 void
-op_q(Grid* g, int x, int y, char c)
+op_q(Grid* g, int x, int y)
 {
-  char px  = get_port(g, x - 3, y, 0);
-  char py  = get_port(g, x - 2, y, 0);
-  char len = get_port(g, x - 1, y, 0);
+  char px  = get_port(g, x - 3, y, false);
+  char py  = get_port(g, x - 2, y, false);
+  char len = get_port(g, x - 1, y, false);
   int len_ = cb36(len);
   if (!len_) len_ = 1;
   for (int i = 0; i < len_; ++i)
-    set_port(g, x + 1 - len_ + i, y + 1, get_port(g, x + 1 + cb36(px) + i, y + cb36(py), 1));
-  (void)c;
+    set_port(g, x + 1 - len_ + i, y + 1, get_port(g, x + 1 + cb36(px) + i, y + cb36(py), true));
 }
 
 void
-op_r(Grid* g, int x, int y, char c)
+op_r(Grid* g, int x, int y)
 {
-  char         min  = get_port(g, x - 1, y, 0);
-  char         max  = get_port(g, x + 1, y, 1);
+  char         min  = get_port(g, x - 1, y, false);
+  char         max  = get_port(g, x + 1, y, true);
   int          min_ = cb36(min);
   int          max_ = cb36(max);
-  unsigned int key  = (g->r + y * g->w + x) ^ (g->f << 16);
+  unsigned int key  = (g->random + y * g->width + x) ^ (g->frame << 16);
   if (!max_)        max_ = 36;
   if (min_ == max_) min_ = max_ - 1;
   key = (key ^ 61U) ^ (key >> 16);
@@ -622,13 +627,12 @@ op_r(Grid* g, int x, int y, char c)
   key =  key * 0x27d4eb2d;
   key =  key ^ (key >> 15);
   set_port(g, x, y + 1, cchr(key % (max_ - min_) + min_, max));
-  (void)c;
 }
 
 void
 op_s(Grid* g, int x, int y, char c)
 {
-  if (y >= g->h - 1 || get_cell(g, x, y + 1) != '.')
+  if (y >= g->height - 1 || get_cell(g, x, y + 1) != '.')
     set_cell(g, x, y, '*');
   else {
     set_cell(g, x, y    , '.');
@@ -639,40 +643,37 @@ op_s(Grid* g, int x, int y, char c)
 }
 
 void
-op_t(Grid* g, int x, int y, char c)
+op_t(Grid* g, int x, int y)
 {
-  char key = get_port(g, x - 2, y, 0);
-  char len = get_port(g, x - 1, y, 0);
+  char key = get_port(g, x - 2, y, false);
+  char len = get_port(g, x - 1, y, false);
   int len_ = cb36(len);
   if (!len_) len_ = 1;
   for (int i = 0; i < len_; ++i)
     set_lock(g, x + 1 + i, y);
-  set_port(g, x, y + 1, get_port(g, x + 1 + (cb36(key) % len_), y, 1));
-  (void)c;
+  set_port(g, x, y + 1, get_port(g, x + 1 + (cb36(key) % len_), y, true));
 }
 
 void
-op_u(Grid* g, int x, int y, char c)
+op_u(Grid* g, int x, int y)
 {
-  char step = get_port(g, x - 1, y, 0);
-  char max  = get_port(g, x + 1, y, 1);
+  char step = get_port(g, x - 1, y, false);
+  char max  = get_port(g, x + 1, y, true);
   int step_ = cb36(step);
   int max_  = cb36(max);
   if (!step_) step_ = 1;
   if (!max_)  max_  = 8;
-  int bucket = (step_ * (g->f + max_ - 1)) % max_ + step_;
+  int bucket = (step_ * (g->frame + max_ - 1)) % max_ + step_;
   set_port(g, x, y + 1, bucket >= max_ ? '*' : '.');
-  (void)c;
 }
 
 void
-op_v(Grid* g, int x, int y, char c)
+op_v(Grid* g, int x, int y)
 {
-  char w = get_port(g, x - 1, y, 0);
-  char r = get_port(g, x + 1, y, 1);
+  char w = get_port(g, x - 1, y, false);
+  char r = get_port(g, x + 1, y, true);
   if      (w != '.')             g->var[cb36(w)] = r;
   else if (w == '.' && r != '.') set_port(g, x, y + 1, g->var[cb36(r)]);
-  (void)c;
 }
 
 void
@@ -689,20 +690,19 @@ op_w(Grid* g, int x, int y, char c)
 }
 
 void
-op_x(Grid* g, int x, int y, char c)
+op_x(Grid* g, int x, int y)
 {
-  char px  = get_port(g, x - 2, y, 0);
-  char py  = get_port(g, x - 1, y, 0);
-  char val = get_port(g, x + 1, y, 1);
+  char px  = get_port(g, x - 2, y, false);
+  char py  = get_port(g, x - 1, y, false);
+  char val = get_port(g, x + 1, y, true);
   set_port(g, x + cb36(px), y + cb36(py) + 1, val);
-  (void)c;
 }
 
 void
 op_y(Grid* g, int x, int y, char c)
 {
   int i;
-  char link = get_port(g, x - 1, y, 0);
+  char link = get_port(g, x - 1, y, false);
   if (link != c) {
     for (i = 1; x + i < 256; ++i)
       if (get_cell(g, x + i, y) != c) break;
@@ -711,11 +711,11 @@ op_y(Grid* g, int x, int y, char c)
 }
 
 void
-op_z(Grid* g, int x, int y, char c)
+op_z(Grid* g, int x, int y)
 {
-  char rate    = get_port(g, x - 1, y, 0);
-  char target  = get_port(g, x + 1, y, 1);
-  char val     = get_port(g, x, y + 1, 1);
+  char rate    = get_port(g, x - 1, y, false);
+  char target  = get_port(g, x + 1, y, true);
+  char val     = get_port(g, x, y + 1, true);
   int  rate_   = cb36(rate);
   int  target_ = cb36(target);
   int  val_    = cb36(val);
@@ -723,7 +723,6 @@ op_z(Grid* g, int x, int y, char c)
   int mod = val_ <= target_ - rate_ ?  rate_ : 
             val_ >= target_ + rate_ ? -rate_ : target_ - val_;
   set_port(g, x, y + 1, cchr(val_ + mod, target));
-  (void)c;
 }
 
 void
@@ -739,15 +738,15 @@ op_comment(Grid* g, int x, int y)
 void
 op_midi(Grid* g, int x, int y)
 {
-  int chn = cb36(get_port(g, x + 1, y, 1));
+  int chn = cb36(get_port(g, x + 1, y, true));
   if (chn == '.') return;
-  int oct = cb36(get_port(g, x + 2, y, 1));
+  int oct = cb36(get_port(g, x + 2, y, true));
   if (oct == '.') return;
-  int nte = get_port(g, x + 3, y, 1);
+  int nte = get_port(g, x + 3, y, true);
   if (cisp(nte)) return;
-  int vel = get_port(g, x + 4, y, 1);
+  int vel = get_port(g, x + 4, y, true);
   if (vel == '.') vel = 'z';
-  int len = get_port(g, x + 5, y, 1);
+  int len = get_port(g, x + 5, y, true);
   if (get_bang(g, x, y)) {
     send_midi(clamp(chn, 0, VOICES - 1),
               12 * oct + ctbl(nte),
@@ -763,32 +762,32 @@ void
 operate(Grid* g, int x, int y, char c)
 {
   set_type(g, x, y, 3);
-  if      (clca(c) == 'a') op_a(g, x, y, c);
-  else if (clca(c) == 'b') op_b(g, x, y, c);
-  else if (clca(c) == 'c') op_c(g, x, y, c);
-  else if (clca(c) == 'd') op_d(g, x, y, c);
+  if      (clca(c) == 'a') op_a(g, x, y);
+  else if (clca(c) == 'b') op_b(g, x, y);
+  else if (clca(c) == 'c') op_c(g, x, y);
+  else if (clca(c) == 'd') op_d(g, x, y);
   else if (clca(c) == 'e') op_e(g, x, y, c);
-  else if (clca(c) == 'f') op_f(g, x, y, c);
-  else if (clca(c) == 'g') op_g(g, x, y, c);
-  else if (clca(c) == 'h') op_h(g, x, y, c);
-  else if (clca(c) == 'i') op_i(g, x, y, c);
+  else if (clca(c) == 'f') op_f(g, x, y);
+  else if (clca(c) == 'g') op_g(g, x, y);
+  else if (clca(c) == 'h') op_h(g, x, y);
+  else if (clca(c) == 'i') op_i(g, x, y);
   else if (clca(c) == 'j') op_j(g, x, y, c);
-  else if (clca(c) == 'k') op_k(g, x, y, c);
-  else if (clca(c) == 'l') op_l(g, x, y, c);
-  else if (clca(c) == 'm') op_m(g, x, y, c);
+  else if (clca(c) == 'k') op_k(g, x, y);
+  else if (clca(c) == 'l') op_l(g, x, y);
+  else if (clca(c) == 'm') op_m(g, x, y);
   else if (clca(c) == 'n') op_n(g, x, y, c);
-  else if (clca(c) == 'o') op_o(g, x, y, c);
-  else if (clca(c) == 'p') op_p(g, x, y, c);
-  else if (clca(c) == 'q') op_q(g, x, y, c);
-  else if (clca(c) == 'r') op_r(g, x, y, c);
+  else if (clca(c) == 'o') op_o(g, x, y);
+  else if (clca(c) == 'p') op_p(g, x, y);
+  else if (clca(c) == 'q') op_q(g, x, y);
+  else if (clca(c) == 'r') op_r(g, x, y);
   else if (clca(c) == 's') op_s(g, x, y, c);
-  else if (clca(c) == 't') op_t(g, x, y, c);
-  else if (clca(c) == 'u') op_u(g, x, y, c);
-  else if (clca(c) == 'v') op_v(g, x, y, c);
+  else if (clca(c) == 't') op_t(g, x, y);
+  else if (clca(c) == 'u') op_u(g, x, y);
+  else if (clca(c) == 'v') op_v(g, x, y);
   else if (clca(c) == 'w') op_w(g, x, y, c);
-  else if (clca(c) == 'x') op_x(g, x, y, c);
+  else if (clca(c) == 'x') op_x(g, x, y);
   else if (clca(c) == 'y') op_y(g, x, y, c);
-  else if (clca(c) == 'z') op_z(g, x, y, c);
+  else if (clca(c) == 'z') op_z(g, x, y);
   else if (clca(c) == '*') set_cell(g, x, y, '.');
   else if (clca(c) == '#') op_comment(g, x, y);
   else if (clca(c) == ':') op_midi(g, x, y);
@@ -798,7 +797,7 @@ operate(Grid* g, int x, int y, char c)
 void
 init_grid_frame(Grid* g)
 {
-  for (int i = 0; i < g->l; ++i) {
+  for (int i = 0; i < g->length; ++i) {
     g->lock[i] = 0;
     g->type[i] = 0;
   }
@@ -810,29 +809,29 @@ int
 run_grid(Grid* g)
 {
   init_grid_frame(g);
-  for (int i = 0; i < g->l; ++i) {
+  for (int i = 0; i < g->length; ++i) {
     char c = g->data[i];
-    int  x = i % g->w;
-    int  y = i / g->w;
+    int  x = i % g->width;
+    int  y = i / g->width;
     if (c == '.' || g->lock[i])                     continue;
     if (c >= '0' && c <= '9')                       continue;
     if (c >= 'a' && c <= 'z' && !get_bang(g, x, y)) continue;
     operate(g, x, y, c);
   }
-  g->f++;
+  g->frame++;
   return 1;
 }
 
 void
 init_grid(Grid* g, int w, int h)
 {
-  g->w = w;
-  g->h = h;
-  g->l = w * h;
-  g->f = 0;
-  g->r = 1;
-  for (int i = 0; i < g->l; ++i)
-    set_cell(g, i % g->w, i / g->w, '.');
+  g->width      = w;
+  g->height = h;
+  g->length = w * h;
+  g->frame  = 0;
+  g->random = 1;
+  for (int i = 0; i < g->length; ++i)
+    set_cell(g, i % g->width, i / g->width, '.');
   init_grid_frame(g);
 }
 
@@ -880,10 +879,10 @@ draw_ui(Uint32* dst)
   draw_icon(dst,  2 * 8, bottom, font[cursor.y % 36], 1                                   , 0);
   draw_icon(dst,  3 * 8, bottom, icons[2]           , cursor.w > 1 || cursor.h > 1 ? 4 : 3, 0);
   // ---------- frame --------------------
-  draw_icon(dst,  5 * 8, bottom, font[(doc.grid.f / 1296) % 36], 1                                , 0);
-  draw_icon(dst,  6 * 8, bottom, font[(doc.grid.f / 36) % 36]  , 1                                , 0);
-  draw_icon(dst,  7 * 8, bottom, font[ doc.grid.f % 36]        , 1                                , 0);
-  draw_icon(dst,  8 * 8, bottom, icons[PAUSE ? 1 : 0]          , (doc.grid.f - 1) % 8 == 0 ? 2 : 3, 0);
+  draw_icon(dst,  5 * 8, bottom, font[(doc.grid.frame / 1296) % 36], 1                                , 0);
+  draw_icon(dst,  6 * 8, bottom, font[(doc.grid.frame / 36) % 36]  , 1                                , 0);
+  draw_icon(dst,  7 * 8, bottom, font[ doc.grid.frame % 36]        , 1                                , 0);
+  draw_icon(dst,  8 * 8, bottom, icons[PAUSE ? 1 : 0]          , (doc.grid.frame - 1) % 8 == 0 ? 2 : 3, 0);
   // ---------- speed --------------------
   draw_icon(dst, 10 * 8, bottom, font[(BPM / 100) % 10], 1, 0);
   draw_icon(dst, 11 * 8, bottom, font[(BPM / 10) % 10] , 1, 0);
@@ -908,7 +907,7 @@ redraw(Uint32* dst)
       int    t       = get_type(&doc.grid, x, y);
       Uint8* letter  = font[get_font(x, y, get_cell(&doc.grid, x, y), t, sel)];
       int fg = 0, bg = 0;
-      if ((sel && !MODE) || (sel && MODE && doc.grid.f % 2)) {
+      if ((sel && !MODE) || (sel && MODE && doc.grid.frame % 2)) {
         fg = 0; bg = 4;
       } else {
         if      (t == 1) fg = 3;
@@ -953,7 +952,7 @@ open_doc(Document* d, char* name)
   FILE* f = fopen(name, "r");
   if (!f) return error("Load", "Invalid input file");
   init_grid(&d->grid, HOR, VER);
-  while ((c = fgetc(f)) != EOF && d->grid.l <= MAXSZ) {
+  while ((c = fgetc(f)) != EOF && d->grid.length <= MAXSZ) {
     if (c == '\n') {
       x = 0;
       y++;
@@ -973,8 +972,8 @@ void
 save_doc(Document* d, char* name)
 {
   FILE* f = fopen(name, "w");
-  for (int y = 0; y < d->grid.h; ++y) {
-    for (int x = 0; x < d->grid.w; ++x)
+  for (int y = 0; y < d->grid.height; ++y) {
+    for (int x = 0; x < d->grid.width; ++x)
       fputc(get_cell(&d->grid, x, y), f);
     fputc('\n', f);
   }
@@ -1176,7 +1175,7 @@ do_key(SDL_Event* event)
     else if (event->key.keysym.sym == SDLK_s)            save_doc(&doc, doc.name);
     else if (event->key.keysym.sym == SDLK_h)            set_option(&GUIDES, !GUIDES);
     else if (event->key.keysym.sym == SDLK_i)            set_option(&MODE, !MODE);
-    else if (event->key.keysym.sym == SDLK_a)            select1(0, 0, doc.grid.w, doc.grid.h);
+    else if (event->key.keysym.sym == SDLK_a)            select1(0, 0, doc.grid.width, doc.grid.height);
     else if (event->key.keysym.sym == SDLK_x)            cut_clip(&cursor, clip);
     else if (event->key.keysym.sym == SDLK_c)            copy_clip(&cursor, clip);
     else if (event->key.keysym.sym == SDLK_v)            paste_clip(&cursor, clip, shift);
@@ -1233,6 +1232,8 @@ init()
   init_midi();
   return 1;
 }
+
+// ============================== Main ==============================  
 
 int
 main(int argc, char* argv[])
