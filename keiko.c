@@ -5,8 +5,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define HOR 32
-#define VER 16
+#define HOR 8
+#define VER 2
 #define PAD 2
 #define VOICES 16
 #define DEVICE 0
