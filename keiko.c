@@ -19,15 +19,15 @@ typedef unsigned char Uint8;
 
 typedef struct
 {
-  int   w, h, l, f, r;
+  int   w, h, l, f, r;  // w = width, h = height
   Uint8 var[36], data[MAXSZ], lock[MAXSZ], type[MAXSZ];
 } Grid;
 
 typedef struct
 {
-  int  unsaved;
-  char name[256];
-  Grid grid;
+  bool  unsaved;
+  char  name[256];
+  Grid  grid;
 } Document;
 
 typedef struct
@@ -165,12 +165,13 @@ signal_handler(int sig)
 }
 
 int
-clmp(int val, int min, int max)
+clamp(int val, int min, int max)
 {
   return (val >= min) ? ((val <= max) ? val : max) : min;
 }
 
-int
+// is c special character
+bool
 cisp(char c)
 {
   return c == '.' || c == ':' || c == '#' || c == '*';
@@ -184,6 +185,7 @@ cchr(int v, char c)
   return (c >= 'A' && c <= 'Z' ? 'A' : 'a') + v - 10;
 }
 
+// char to int; 0 <= int <= 35
 int
 cb36(char c)
 {
@@ -193,12 +195,14 @@ cb36(char c)
   return 0;
 }
 
+// lower-case to upper-case
 char
 cuca(char c)
 {
   return c >= 'a' && c <= 'z' ? 'A' + c - 'a' : c;
 }
 
+// upper-case to lower-case
 char
 clca(char c)
 {
@@ -229,17 +233,19 @@ validcharacter(char c)
   return cb36(c) || c == '0' || cisp(c);
 }
 
+// char to midi note?
 int
 ctbl(char c)
 {
-  int notes[] = { 0, 2, 4, 5, 7, 9, 11 };
+  int notes[7] = { 0, 2, 4, 5, 7, 9, 11 };
   if (c >= '0' && c <= '9') return c - '0';
-  int sharp   = c >= 'a' && c <= 'z';
-  int uc      = sharp ? c - 'a' + 'A' : c;
-  int deg     = uc <= 'B' ? 'G' - 'B' + uc - 'A' : uc - 'C';
+  bool sharp   = c >= 'a' && c <= 'z';
+  int  uc      = sharp ? c - 'a' + 'A' : c;
+  int  deg     = uc <= 'B' ? 'G' - 'B' + uc - 'A' : uc - 'C';
   return deg / 7 * 12 + notes[deg % 7] + sharp;
 }
 
+// string copy; len includes zero-terminal
 char*
 scpy(char* src, char* dst, int len)
 {
@@ -730,10 +736,10 @@ opmidi(Grid* g, int x, int y)
   if (vel == '.') vel = 'z';
   int len = getport(g, x + 5, y, 1);
   if (getbang(g, x, y)) {
-    sendmidi(clmp(chn, 0, VOICES - 1),
+    sendmidi(clamp(chn, 0, VOICES - 1),
              12 * oct + ctbl(nte),
-             clmp(cb36(vel), 0, 36),
-             clmp(cb36(len), 1, 36));
+             clamp(cb36(vel), 0, 36),
+             clamp(cb36(len), 1, 36));
     settype(g, x, y, 3);
   } else {
     settype(g, x, y, 2);
@@ -793,8 +799,8 @@ rungrid(Grid* g)
   initgridframe(g);
   for (int i = 0; i < g->l; ++i) {
     char c = g->data[i];
-    int x  = i % g->w;
-    int y  = i / g->w;
+    int  x = i % g->w;
+    int  y = i / g->w;
     if (c == '.' || g->lock[i])                    continue;
     if (c >= '0' && c <= '9')                      continue;
     if (c >= 'a' && c <= 'z' && !getbang(g, x, y)) continue;
@@ -870,7 +876,7 @@ drawui(Uint32* dst)
   drawicon(dst, 11 * 8, bottom, font[(BPM / 10) % 10] , 1, 0);
   drawicon(dst, 12 * 8, bottom, font[ BPM % 10]       , 1, 0);
   // ---------- io -----------------------
-  drawicon(dst, 13 * 8, bottom, n > 0 ? icons[2 + clmp(n, 0, 6)] : font[70], 2, 0);
+  drawicon(dst, 13 * 8, bottom, n > 0 ? icons[2 + clamp(n, 0, 6)] : font[70], 2, 0);
   // ---------- generics -----------------
   drawicon(dst, 15 * 8       , bottom, icons[GUIDES ? 10 : 9], GUIDES      ? 1 : 2, 0);
   drawicon(dst, (HOR - 1) * 8, bottom, icons[11]             , doc.unsaved ? 2 : 3, 0);
@@ -920,7 +926,7 @@ void
 makedoc(Document* d, char* name)
 {
   initgrid(&d->grid, HOR, VER);
-  d->unsaved = 0;
+  d->unsaved = false;
   scpy(name, d->name, 256);
   redraw(pixels);
   printf("Made: %s\n", name);
@@ -943,7 +949,7 @@ opendoc(Document* d, char* name)
       x++;
     }
   }
-  d->unsaved = 0;
+  d->unsaved = false;
   scpy(name, d->name, 256);
   redraw(pixels);
   printf("Opened: %s\n", name);
@@ -960,7 +966,7 @@ savedoc(Document* d, char* name)
     fputc('\n', f);
   }
   fclose(f);
-  d->unsaved = 0;
+  d->unsaved = false;
   scpy(name, d->name, 256);
   redraw(pixels);
   printf("Saved: %s\n", name);
@@ -989,10 +995,10 @@ void
 select1(int x, int y, int w, int h)
 {
   Rect2d r;
-  r.x = clmp(x, 0, HOR - 1);
-  r.y = clmp(y, 0, VER - 1);
-  r.w = clmp(w, 1, HOR - x);
-  r.h = clmp(h, 1, VER - y);
+  r.x = clamp(x, 0, HOR - 1);
+  r.y = clamp(y, 0, VER - 1);
+  r.w = clamp(w, 1, HOR - x);
+  r.h = clamp(h, 1, VER - y);
   if (r.x != cursor.x || 
       r.y != cursor.y || 
       r.w != cursor.w ||
@@ -1036,7 +1042,7 @@ comment(Rect2d* r)
     setcell(&doc.grid, r->x, r->y + y, c);
     setcell(&doc.grid, r->x + r->w - 1, r->y + y, c);
   }
-  doc.unsaved = 1;
+  doc.unsaved = true;
   redraw(pixels);
 }
 
@@ -1047,7 +1053,7 @@ insert(char c)
     for (int y = 0; y < cursor.h; ++y)
       setcell(&doc.grid, cursor.x + x, cursor.y + y, c);
   if (MODE) move(1, 0, 0);
-  doc.unsaved = 1;
+  doc.unsaved = true;
   redraw(pixels);
 }
 
@@ -1112,7 +1118,7 @@ pasteclip(Rect2d* r, char* c, int insert)
       x++;
     }
   }
-  doc.unsaved = 1;
+  doc.unsaved = true;
   redraw(pixels);
 }
 
@@ -1232,7 +1238,7 @@ main(int argc, char* argv[])
       else            { tick++; }
     }
     elapsed = (SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency() * 1000.0f;
-    SDL_Delay(clmp(16.666f - elapsed, 0, 1000));
+    SDL_Delay(clamp(16.666f - elapsed, 0, 1000));
     while (SDL_PollEvent(&event) != 0) {
       if      (event.type == SDL_QUIT)            quit();
       else if (event.type == SDL_MOUSEBUTTONUP)   domouse(&event);
