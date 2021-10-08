@@ -17,9 +17,22 @@
 
 typedef unsigned char Uint8;
 
+// type defines theme
+// https://github.com/hundredrabbits/Orca/blob/main/desktop/sources/scripts/client.js#L259
+// but still wrong for Keiko; needs debugging
+// TODO
+typedef enum {
+  operator,
+  haste,
+  input,
+  output,
+  selected,
+  locked,
+} Theme;
+
 typedef struct
 {
-  int   w, h, l, f, r;  // w = width, h = height
+  int   w, h, l, f, r;  // w = width, h = height, l = length, f = frame, r = random(seed)
   Uint8 var[36], data[MAXSZ], lock[MAXSZ], type[MAXSZ];
 } Grid;
 
@@ -596,11 +609,11 @@ op_q(Grid* g, int x, int y, char c)
 void
 op_r(Grid* g, int x, int y, char c)
 {
-  char min         = get_port(g, x - 1, y, 0);
-  char max         = get_port(g, x + 1, y, 1);
-  int min_         = cb36(min);
-  int max_         = cb36(max);
-  unsigned int key = (g->r + y * g->w + x) ^ (g->f << 16);
+  char         min  = get_port(g, x - 1, y, 0);
+  char         max  = get_port(g, x + 1, y, 1);
+  int          min_ = cb36(min);
+  int          max_ = cb36(max);
+  unsigned int key  = (g->r + y * g->w + x) ^ (g->f << 16);
   if (!max_)        max_ = 36;
   if (min_ == max_) min_ = max_ - 1;
   key = (key ^ 61U) ^ (key >> 16);
