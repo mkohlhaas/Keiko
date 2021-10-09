@@ -5,10 +5,12 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+// ==============================================================================  
 // ============================== Data Definitions ==============================  
+// ==============================================================================  
 
-#define HOR     8
-#define VER     3
+#define HOR    80
+#define VER     5
 #define PAD     2
 #define VOICES 16
 #define DEVICE  0
@@ -18,38 +20,31 @@
 #define MAXSZ  (HOR * VER)
 
 typedef unsigned char Uint8;
+typedef unsigned int  Uint;
 
-// type defines theme
-// https://github.com/hundredrabbits/Orca/blob/main/desktop/sources/scripts/client.js#L259
-// but still wrong for Keiko; needs debugging
-// TODO
-typedef enum {
-  inactive_operator  = 0,  // or simply empty
-  comments           = 1,
-  input              = 2,
-  active_operator    = 3,
-  input_locked       = 4,
-  output             = 5,
-  selected,
-} Theme;
+typedef enum cell_type{ NoOp, Comment, LeftInput, Operator, RightInput, Output, Selected, } CellType;
+
+#define N_VARS 36
 
 typedef struct
 {
-  int    width;
-  int    height;
-  int    length;
-  int    frame;
-  int    random;       // seed value for random number generator; default = 1
-  Uint8  var[36];
-  Uint8  data[MAXSZ];
-  bool   lock[MAXSZ];
-  Uint8  type[MAXSZ];
+  int      width;
+  int      height;
+  int      length;
+  int      frame;
+  int      random;       // seed value for random number generator; default = 1
+  Uint8    vars[N_VARS];
+  Uint8    data[MAXSZ];
+  bool     lock[MAXSZ];
+  CellType type[MAXSZ];
 } Grid;
+
+#define FILE_NAME_SIZE 256
 
 typedef struct
 {
   bool  unsaved;
-  char  name[256];
+  char  name[FILE_NAME_SIZE];
   Grid  grid;
 } Document;
 
@@ -57,14 +52,14 @@ typedef struct
 {
   int x, y;
   int w, h; // width, height
-} Rect2d;
+} Rect;
 
 typedef struct
 {
-  int  chn; 
-  int  val; 
-  int  vel; 
-  int  len;
+  int  channel;
+  int  value;
+  int  velocity;
+  int  length;
   bool trigger;
 } MidiNote;
 
@@ -76,15 +71,17 @@ typedef struct midi_list
   MidiList* next;
 } MidiList;
 
+// ==============================================================================  
 // ============================== Global Variables ==============================  
+// ==============================================================================  
 
 jack_client_t* client;
 jack_port_t*   output_port;
 
 Document  doc;
 char      clip[CLIPSZ];
-MidiList* voices = NULL;
-Rect2d    cursor;
+MidiList* voices;
+Rect      cursor;
 
 int WIDTH  = 8 * HOR + PAD * 8 * 2;
 int HEIGHT = 8 * (VER + 2) + PAD * 8 * 2;
@@ -181,19 +178,14 @@ Uint8 font[][8] = {
   { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
 };
 
-SDL_Window*   gWindow   = NULL;
-SDL_Renderer* gRenderer = NULL;
-SDL_Texture*  gTexture  = NULL;
+SDL_Window*   gWindow;
+SDL_Renderer* gRenderer;
+SDL_Texture*  gTexture;
 Uint32*       pixels;
 
-// ============================== Functions ==============================  
-
-void
-signal_handler(int sig)
-{
-  jack_client_close(client);
-  fprintf(stderr, "signal received, exiting ...\n");
-}
+// ==============================================================================  
+// ============================== Helper Functions ==============================  
+// ==============================================================================  
 
 int
 clamp(int val, int min, int max)
@@ -211,7 +203,7 @@ cisp(char c)
 char
 cchr(int v, char c)
 {
-  v = abs(v % 36);
+  v = abs(v % N_VARS);
   if (v >= 0 && v <= 9) return '0' + v;
   return (c >= 'A' && c <= 'Z' ? 'A' : 'a') + v - 10;
 }
@@ -226,14 +218,14 @@ cb36(char c)
   return 0;
 }
 
-// lower-case to upper-case
+// to upper-case
 char
 cuca(char c)
 {
   return c >= 'a' && c <= 'z' ? 'A' + c - 'a' : c;
 }
 
-// upper-case to lower-case
+// to lower-case
 char
 clca(char c)
 {
@@ -258,7 +250,7 @@ valid_position(Grid* g, int x, int y)
   return x >= 0 && x <= g->width - 1 && y >= 0 && y <= g->height - 1;
 }
 
-int
+bool
 valid_character(char c)
 {
   return cb36(c) || c == '0' || cisp(c);
@@ -270,9 +262,9 @@ ctbl(char c)
 {
   int notes[7] = { 0, 2, 4, 5, 7, 9, 11 };
   if (c >= '0' && c <= '9') return c - '0';
-  bool sharp   = c >= 'a' && c <= 'z';
-  int  uc      = sharp ? c - 'a' + 'A' : c;
-  int  deg     = uc <= 'B' ? 'G' - 'B' + uc - 'A' : uc - 'C';
+  bool sharp = c >= 'a' && c <= 'z';
+  int  uc    = sharp ? c - 'a' + 'A' : c;
+  int  deg   = uc <= 'B' ? 'G' - 'B' + uc - 'A' : uc - 'C';
   return deg / 7 * 12 + notes[deg % 7] + sharp;
 }
 
@@ -300,11 +292,12 @@ set_cell(Grid* g, int x, int y, char c)
     g->data[x + (y * g->width)] = c;
 }
 
-int
+CellType
 get_type(Grid* g, int x, int y)
 {
-  if (valid_position(g, x, y)) return g->type[x + (y * g->width)];
-  return 0;
+  if (valid_position(g, x, y))
+    return g->type[x + (y * g->width)];
+  return NoOp;
 }
 
 void
@@ -319,41 +312,39 @@ set_lock(Grid* g, int x, int y)
 {
   if (valid_position(g, x, y)) {
     g->lock[x + (y * g->width)] = true;
-    if (!get_type(g, x, y)) {
-		// printf("########################################\n");
-		// exit(0);
-		set_type(g, x, y, 1);
-	}
+    if (get_type(g, x, y) != NoOp)
+        set_type(g, x, y, Comment);
   }
 }
 
+// set operator's output
 void
 set_port(Grid* g, int x, int y, char c)
 {
   set_lock(g, x, y);
-  set_type(g, x, y, 5);
+  set_type(g, x, y, Output);
   set_cell(g, x, y, c);
 }
 
+// get operator's input
 int
 get_port(Grid* g, int x, int y, bool lock)
 {
   if (lock) {
     set_lock(g, x, y);
-    set_type(g, x, y, 4);
-  } else {
-    set_type(g, x, y, 2);
-  }
+    set_type(g, x, y, RightInput);
+  } else
+    set_type(g, x, y, LeftInput);
   return get_cell(g, x, y);
 }
 
-int
+bool
 get_bang(Grid* g, int x, int y)
 {
-  return get_cell(g, x - 1, y) == '*' ||
-         get_cell(g, x + 1, y) == '*' ||
-         get_cell(g, x, y - 1) == '*' ||
-         get_cell(g, x, y + 1) == '*';
+  return get_cell(g, x - 1, y    ) == '*' ||
+         get_cell(g, x + 1, y    ) == '*' ||
+         get_cell(g, x    , y - 1) == '*' ||
+         get_cell(g, x    , y + 1) == '*';
 }
 
 size_t
@@ -362,12 +353,23 @@ get_list_length()
   size_t    n    = 0;
   MidiList* list = voices;
 
-  while (list->next) {
+  while (list) {
     n++;
     list = list->next;
   }
   return n;
 }
+
+bool
+error(char* msg, const char* err)
+{
+  printf("Error %s: %s\n", msg, err);
+  return false;
+}
+
+// ==================================================================  
+// ============================== MIDI ==============================  
+// ==================================================================  
 
 int
 process(jack_nframes_t nframes, void* arg)
@@ -383,15 +385,15 @@ process(jack_nframes_t nframes, void* arg)
     if (n->trigger) {
       n->trigger = false;
       buffer     = jack_midi_event_reserve(port_buf, 0, 3);
-      buffer[0]  = 0x90 + n->chn;
-      buffer[1]  = n->val;
-      buffer[2]  = n->vel;
+      buffer[0]  = 0x90 + n->channel;
+      buffer[1]  = n->value;
+      buffer[2]  = n->velocity;
     } else {
-      n->len -= nframes;
-      if (n->len < 0) {
+      n->length -= nframes;
+      if (n->length < 0) {
         buffer         = jack_midi_event_reserve(port_buf, 0, 3);
-        buffer[0]      = 0x80 + n->chn;
-        buffer[1]      = n->val;
+        buffer[0]      = 0x80 + n->channel;
+        buffer[1]      = n->value;
         buffer[2]      = 0;
         note_to_delete = iter->next;
         iter->next     = iter->next->next;
@@ -405,39 +407,38 @@ process(jack_nframes_t nframes, void* arg)
 }
 
 void
-send_midi(int chn, int val, int vel, int len)
+send_midi(int channel, int value, int velocity, int length)
 {
-  MidiList* ml     = malloc(sizeof(MidiList));
-  ml->next         = voices->next;
-  voices->next     = ml;
-  ml->note.chn     = chn;
-  ml->note.val     = val;
-  ml->note.vel     = vel * 3;
-  ml->note.len     = len * 60 / (float)BPM * jack_get_sample_rate(client);
-  // fprintf(stderr, "Note length: %d\n", ml->note.len);
-  ml->note.trigger = true;
+  MidiList* ml      = malloc(sizeof *ml);
+  ml->next          = voices->next;
+  voices->next      = ml;
+  ml->note.channel  = channel;
+  ml->note.value    = value;
+  ml->note.velocity = velocity * 3;
+  ml->note.length   = length * 60 / (float)BPM * jack_get_sample_rate(client);
+  ml->note.trigger  = true;
 }
 
-void
+bool
 init_midi()
 {
-  if ((client = jack_client_open("Keiko", JackNullOption, NULL)) == 0) {
-    fprintf(stderr, "JACK server not running?\n");
-    exit(1);
-  }
+  if ((client = jack_client_open("Keiko", JackNullOption, NULL)) == 0)
+    return error("jack", "JACK server not running?\n");
   jack_set_process_callback(client, process, 0);
   output_port = jack_port_register(client, "midi-out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
-  if (jack_activate(client)) {
-    fprintf(stderr, "cannot activate client");
-    exit(1);
-  }
-  voices       = malloc(sizeof(MidiList));
+  if (jack_activate(client))
+    return error("jack", "cannot activate client");
+  voices       = malloc(sizeof *voices);
   voices->next = NULL;
   voices->note = (MidiNote){};
+  return true;
 }
 
+// =======================================================================  
 // ============================== Operators ==============================  
+// =======================================================================  
 
+// add(a b); Outputs sum of inputs.
 void
 op_a(Grid* g, int x, int y)
 {
@@ -446,6 +447,7 @@ op_a(Grid* g, int x, int y)
   set_port(g, x, y + 1, cchr(cb36(a) + cb36(b), b));
 }
 
+// subtract(a b); Outputs difference of inputs.
 void
 op_b(Grid* g, int x, int y)
 {
@@ -454,43 +456,43 @@ op_b(Grid* g, int x, int y)
   set_port(g, x, y + 1, cchr(cb36(a) - cb36(b), b));
 }
 
+// clock(rate mod); Outputs modulo of frame.
 void
 op_c(Grid* g, int x, int y)
 {
   char rate  = get_port(g, x - 1, y, false);
   char mod   = get_port(g, x + 1, y, true);
-  int  mod_  = cb36(mod);
-  int  rate_ = cb36(rate);
-  if (!rate_) rate_ = 1;
-  if (!mod_)  mod_  = 8;
+  int  mod_  = cb36(mod);  if (!mod_)  mod_  = 8;
+  int  rate_ = cb36(rate); if (!rate_) rate_ = 1;
   set_port(g, x, y + 1, cchr(g->frame / rate_ % mod_, mod));
 }
 
+// delay(rate mod); Bangs on modulo of frame.
 void
 op_d(Grid* g, int x, int y)
 {
   char rate  = get_port(g, x - 1, y, false);
   char mod   = get_port(g, x + 1, y, true);
-  int  rate_ = cb36(rate);
-  int  mod_  = cb36(mod);
-  if (!rate_) rate_ = 1;
-  if (!mod_)  mod_  = 8;
+  int  rate_ = cb36(rate); if (!rate_) rate_ = 1;
+  int  mod_  = cb36(mod);  if (!mod_)  mod_  = 8;
   set_port(g, x, y + 1, g->frame % (rate_ * mod_) == 0 ? '*' : '.');
 }
 
+// east; Moves eastward, or bangs.
 void
 op_e(Grid* g, int x, int y, char c)
 {
   if (x >= g->width - 1 || get_cell(g, x + 1, y) != '.')
     set_cell(g, x, y, '*');
   else {
-    set_cell(g, x,     y, '.');
+    set_cell(g, x    , y, '.');
     set_port(g, x + 1, y,  c);
-    set_type(g, x + 1, y,  0);
+    set_type(g, x + 1, y,  NoOp);
   }
-  set_type(g, x, y, 0);
+  set_type(g, x, y, NoOp);
 }
 
+// if(a b); Bangs if inputs are equal.
 void
 op_f(Grid* g, int x, int y)
 {
@@ -499,61 +501,63 @@ op_f(Grid* g, int x, int y)
   set_port(g, x, y + 1, a == b ? '*' : '.');
 }
 
+// generator(x y len); Writes operands with offset.
 void
 op_g(Grid* g, int x, int y)
 {
-  char px     = get_port(g, x - 3, y, false);
-  char py     = get_port(g, x - 2, y, false);
-  char len    = get_port(g, x - 1, y, false);
-  int len_    = cb36(len);
-  if (!len_) len_ = 1;
+  char px   = get_port(g, x - 3, y, false);
+  char py   = get_port(g, x - 2, y, false);
+  char len  = get_port(g, x - 1, y, false);
+  int  len_ = cb36(len); if (!len_) len_ = 1;
   for (int i = 0; i < len_; ++i)
     set_port(g, x + i + cb36(px), y + 1 + cb36(py), get_port(g, x + 1 + i, y, true));
 }
 
+// halt; Halts southward operand.
 void
 op_h(Grid* g, int x, int y)
 {
   get_port(g, x, y + 1, true);
 }
 
+// increment(step mod); Increments southward operand.
 void
 op_i(Grid* g, int x, int y)
 {
-  char rate = get_port(g, x - 1, y    , false);
-  char mod  = get_port(g, x + 1, y    , true);
-  char val  = get_port(g, x    , y + 1, true);
-  int rate_ = cb36(rate);
-  int mod_  = cb36(mod);
-  if (!rate_) rate_ = 1;
-  if (!mod_)  mod_  = 36;
+  char rate  = get_port(g, x - 1, y    , false);
+  char mod   = get_port(g, x + 1, y    , true);
+  char val   = get_port(g, x    , y + 1, true);
+  int  rate_ = cb36(rate); if (!rate_) rate_ = 1;
+  int  mod_  = cb36(mod);  if (!mod_)  mod_  = N_VARS;
   set_port(g, x, y + 1, cchr((cb36(val) + rate_) % mod_, mod));
 }
 
+// jumper(val); Outputs northward operand.
 void
 op_j(Grid* g, int x, int y, char c)
 {
-  int i;
   char link = get_port(g, x, y - 1, false);
   if (link != c) {
-    for (i = 1; y + i < 256; ++i)
+    int i;
+    for (i = 1; y + i < g->height; ++i)
       if (get_cell(g, x, y + i) != c) break;
     set_port(g, x, y + i, link);
   }
 }
 
+// konkat(len); Reads multiple variables.
 void
 op_k(Grid* g, int x, int y)
 {
-  char len    = get_port(g, x - 1, y, false);
-  int i, len_ = cb36(len);
-  if (!len_) len_ = 1;
-  for (i = 0; i < len_; ++i) {
-    char key = get_port(g, x + 1 + i, y, true);
-    if (key != '.') set_port(g, x + 1 + i, y + 1, g->var[cb36(key)]);
+  char len  = get_port(g, x - 1, y, false);
+  int  len_ = cb36(len); if (!len_) len_ = 1;
+  for (int i = 0; i < len_; ++i) {
+    char key =      get_port(g, x + 1 + i, y    , true);
+    if (key != '.') set_port(g, x + 1 + i, y + 1, g->vars[cb36(key)]);
   }
 }
 
+// less(a b); Outputs smallest of inputs.
 void
 op_l(Grid* g, int x, int y)
 {
@@ -562,6 +566,7 @@ op_l(Grid* g, int x, int y)
   set_port(g, x, y + 1, cb36(a) < cb36(b) ? a : b);
 }
 
+// multiply(a b); Outputs product of inputs.
 void
 op_m(Grid* g, int x, int y)
 {
@@ -570,19 +575,21 @@ op_m(Grid* g, int x, int y)
   set_port(g, x, y + 1, cchr(cb36(a) * cb36(b), b));
 }
 
+// north; Moves Northward, or bangs.
 void
 op_n(Grid* g, int x, int y, char c)
 {
   if (y <= 0 || get_cell(g, x, y - 1) != '.')
-    set_cell(g, x, y, '*');
+    set_cell(g, x, y    , '*');
   else {
     set_cell(g, x, y    , '.');
     set_port(g, x, y - 1,  c);
-    set_type(g, x, y - 1,  0);
+    set_type(g, x, y - 1,  NoOp);
   }
-  set_type(g, x, y, 0);
+  set_type(g, x, y, NoOp);
 }
 
+// read(x y read); Reads operand with offset.
 void
 op_o(Grid* g, int x, int y)
 {
@@ -591,41 +598,40 @@ op_o(Grid* g, int x, int y)
   set_port(g, x, y + 1, get_port(g, x + 1 + cb36(px), y + cb36(py), true));
 }
 
+// push(len key val); Writes eastward operand.
 void
 op_p(Grid* g, int x, int y)
 {
-  char key = get_port(g, x - 2, y, false);
-  char len = get_port(g, x - 1, y, false);
-  char val = get_port(g, x + 1, y, true);
-  int len_ = cb36(len);
-  if (!len_) len_ = 1;
+  char key  = get_port(g, x - 2, y, false);
+  char len  = get_port(g, x - 1, y, false);
+  char val  = get_port(g, x + 1, y, true);
+  int  len_ = cb36(len); if (!len_) len_ = 1;
   for (int i = 0; i < len_; ++i)
     set_lock(g, x + i, y + 1);
   set_port(g, x + (cb36(key) % len_), y + 1, val);
 }
 
+// query(x y len); Reads operands with offset.
 void
 op_q(Grid* g, int x, int y)
 {
-  char px  = get_port(g, x - 3, y, false);
-  char py  = get_port(g, x - 2, y, false);
-  char len = get_port(g, x - 1, y, false);
-  int len_ = cb36(len);
-  if (!len_) len_ = 1;
+  char px   = get_port(g, x - 3, y, false);
+  char py   = get_port(g, x - 2, y, false);
+  char len  = get_port(g, x - 1, y, false);
+  int  len_ = cb36(len); if (!len_) len_ = 1;
   for (int i = 0; i < len_; ++i)
     set_port(g, x + 1 - len_ + i, y + 1, get_port(g, x + 1 + cb36(px) + i, y + cb36(py), true));
 }
 
+// random(min max); Outputs random value.
 void
 op_r(Grid* g, int x, int y)
 {
-  char         min  = get_port(g, x - 1, y, false);
-  char         max  = get_port(g, x + 1, y, true);
-  int          min_ = cb36(min);
-  int          max_ = cb36(max);
-  unsigned int key  = (g->random + y * g->width + x) ^ (g->frame << 16);
-  if (!max_)        max_ = 36;
-  if (min_ == max_) min_ = max_ - 1;
+  char min  = get_port(g, x - 1, y, false);
+  char max  = get_port(g, x + 1, y, true);
+  int  max_ = cb36(max); if (!max_)        max_ = N_VARS;
+  int  min_ = cb36(min); if (min_ == max_) min_ = max_ - 1;
+  Uint key  = (g->random + y * g->width + x) ^ (g->frame << 16);
   key = (key ^ 61U) ^ (key >> 16);
   key =  key + (key << 3);
   key =  key ^ (key >> 4);
@@ -634,66 +640,69 @@ op_r(Grid* g, int x, int y)
   set_port(g, x, y + 1, cchr(key % (max_ - min_) + min_, max));
 }
 
+// south; Moves southward, or bangs.
 void
 op_s(Grid* g, int x, int y, char c)
 {
   if (y >= g->height - 1 || get_cell(g, x, y + 1) != '.')
-    set_cell(g, x, y, '*');
+    set_cell(g, x, y    , '*');
   else {
     set_cell(g, x, y    , '.');
     set_port(g, x, y + 1,  c);
-    set_type(g, x, y + 1,  0);
+    set_type(g, x, y + 1,  NoOp);
   }
-  set_type(g, x, y, 0);
+  set_type(g, x, y, NoOp);
 }
 
+// track(key len val); Reads eastward operand.
 void
 op_t(Grid* g, int x, int y)
 {
-  char key = get_port(g, x - 2, y, false);
-  char len = get_port(g, x - 1, y, false);
-  int len_ = cb36(len);
-  if (!len_) len_ = 1;
+  char key  = get_port(g, x - 2, y, false);
+  char len  = get_port(g, x - 1, y, false);
+  int  len_ = cb36(len); if (!len_) len_ = 1;
   for (int i = 0; i < len_; ++i)
     set_lock(g, x + 1 + i, y);
   set_port(g, x, y + 1, get_port(g, x + 1 + (cb36(key) % len_), y, true));
 }
 
+// uclid(step max); Bangs on Euclidean rhythm.
 void
 op_u(Grid* g, int x, int y)
 {
-  char step = get_port(g, x - 1, y, false);
-  char max  = get_port(g, x + 1, y, true);
-  int step_ = cb36(step);
-  int max_  = cb36(max);
-  if (!step_) step_ = 1;
-  if (!max_)  max_  = 8;
-  int bucket = (step_ * (g->frame + max_ - 1)) % max_ + step_;
+  char step   = get_port(g, x - 1, y, false);
+  char max    = get_port(g, x + 1, y, true);
+  int  step_  = cb36(step); if (!step_) step_ = 1;
+  int  max_   = cb36(max);  if (!max_)  max_  = 8;
+  int  bucket = (step_ * (g->frame + max_ - 1)) % max_ + step_;
   set_port(g, x, y + 1, bucket >= max_ ? '*' : '.');
 }
 
+// variable(write read); Reads and writes variable.
 void
 op_v(Grid* g, int x, int y)
 {
   char w = get_port(g, x - 1, y, false);
   char r = get_port(g, x + 1, y, true);
-  if      (w != '.')             g->var[cb36(w)] = r;
-  else if (w == '.' && r != '.') set_port(g, x, y + 1, g->var[cb36(r)]);
+  if      (w != '.')             g->vars[cb36(w)] = r;
+  else if (w == '.' && r != '.') set_port(g, x, y + 1, g->vars[cb36(r)]);
 }
 
+// west; Moves westward, or bangs.
 void
 op_w(Grid* g, int x, int y, char c)
 {
   if (x <= 0 || get_cell(g, x - 1, y) != '.')
-    set_cell(g, x, y, '*');
+    set_cell(g, x    , y, '*');
   else {
     set_cell(g, x    , y, '.');
     set_port(g, x - 1, y,  c);
-    set_type(g, x - 1, y,  0);
+    set_type(g, x - 1, y,  NoOp);
   }
-  set_type(g, x, y, 0);
+  set_type(g, x, y, NoOp);
 }
 
+// write(x y val); Writes operand with offset.
 void
 op_x(Grid* g, int x, int y)
 {
@@ -703,118 +712,120 @@ op_x(Grid* g, int x, int y)
   set_port(g, x + cb36(px), y + cb36(py) + 1, val);
 }
 
+// jymper(val); Outputs westward operand.
 void
 op_y(Grid* g, int x, int y, char c)
 {
   int i;
   char link = get_port(g, x - 1, y, false);
   if (link != c) {
-    for (i = 1; x + i < 256; ++i)
+    for (i = 1; x + i < g->width; ++i)
       if (get_cell(g, x + i, y) != c) break;
     set_port(g, x + i, y, link);
   }
 }
 
+// lerp(rate target); Transitions operand to input.
 void
 op_z(Grid* g, int x, int y)
 {
-  char rate    = get_port(g, x - 1, y, false);
-  char target  = get_port(g, x + 1, y, true);
-  char val     = get_port(g, x, y + 1, true);
-  int  rate_   = cb36(rate);
+  char rate    = get_port(g, x - 1, y    , false);
+  char target  = get_port(g, x + 1, y    , true);
+  char val     = get_port(g, x    , y + 1, true);
+  int  rate_   = cb36(rate); if (!rate_) rate_ = 1;
   int  target_ = cb36(target);
   int  val_    = cb36(val);
-  if (!rate_) rate_ = 1;
-  int mod = val_ <= target_ - rate_ ?  rate_ : 
-            val_ >= target_ + rate_ ? -rate_ : target_ - val_;
+  int  mod     = val_ <= target_ - rate_ ?  rate_ : 
+                 val_ >= target_ + rate_ ? -rate_ : target_ - val_;
   set_port(g, x, y + 1, cchr(val_ + mod, target));
 }
 
+// comment; Halts a line.
 void
 op_comment(Grid* g, int x, int y)
 {
-  for (int i = 1; x + i < 256; ++i) {
+  for (int i = 1; x + i < g->width; ++i) {
     set_lock(g, x + i, y);
     if (get_cell(g, x + i, y) == '#') break;
   }
-  set_type(g, x, y, 1);
+  set_type(g, x, y, Comment);
 }
 
+// midi; Sends a MIDI note.
 void
 op_midi(Grid* g, int x, int y)
 {
-  int chn = cb36(get_port(g, x + 1, y, true));
-  if (chn == '.') return;
-  int oct = cb36(get_port(g, x + 2, y, true));
-  if (oct == '.') return;
-  int nte = get_port(g, x + 3, y, true);
-  if (cisp(nte)) return;
-  int vel = get_port(g, x + 4, y, true);
-  if (vel == '.') vel = 'z';
-  int len = get_port(g, x + 5, y, true);
+  int channel  = cb36(get_port(g, x + 1, y, true)); if (channel     == '.') return;
+  int octave   = cb36(get_port(g, x + 2, y, true)); if (octave      == '.') return;
+  int note     =      get_port(g, x + 3, y, true);  if (cisp(note))         return;
+  int velocity =      get_port(g, x + 4, y, true);  if (velocity    == '.') velocity = 'z';
+  int length   =      get_port(g, x + 5, y, true);
   if (get_bang(g, x, y)) {
-    send_midi(clamp(chn, 0, VOICES - 1),
-              12 * oct + ctbl(nte),
-              clamp(cb36(vel), 0, 36),
-              clamp(cb36(len), 1, 36));
-    set_type(g, x, y, 3);
-  } else {
-    set_type(g, x, y, 2);
-  }
+    send_midi(clamp(channel, 0, VOICES - 1),
+              12 * octave + ctbl(note),
+              clamp(cb36(velocity), 0, N_VARS),
+              clamp(cb36(length),   1, N_VARS));
+    set_type(g, x, y, Operator);
+  } else
+    set_type(g, x, y, LeftInput);
 }
 
 void
 operate(Grid* g, int x, int y, char c)
 {
-  set_type(g, x, y, 3);
-  if      (clca(c) == 'a') op_a(g, x, y);             // add(a b)             Outputs sum of inputs.        
-  else if (clca(c) == 'b') op_b(g, x, y);             // subtract(a b)        Outputs difference of inputs.
-  else if (clca(c) == 'c') op_c(g, x, y);             // clock(rate mod)      Outputs modulo of frame.
-  else if (clca(c) == 'd') op_d(g, x, y);             // delay(rate mod)      Bangs on modulo of frame.
-  else if (clca(c) == 'e') op_e(g, x, y, c);          // east                 Moves eastward, or bangs.
-  else if (clca(c) == 'f') op_f(g, x, y);             // if(a b)              Bangs if inputs are equal.
-  else if (clca(c) == 'g') op_g(g, x, y);             // generator(x y len)   Writes operands with offset.
-  else if (clca(c) == 'h') op_h(g, x, y);             // halt                 Halts southward operand.
-  else if (clca(c) == 'i') op_i(g, x, y);             // increment(step mod)  Increments southward operand.
-  else if (clca(c) == 'j') op_j(g, x, y, c);          // jumper(val)          Outputs northward operand.
-  else if (clca(c) == 'k') op_k(g, x, y);             // konkat(len)          Reads multiple variables.
-  else if (clca(c) == 'l') op_l(g, x, y);             // less(a b)            Outputs smallest of inputs.
-  else if (clca(c) == 'm') op_m(g, x, y);             // multiply(a b)        Outputs product of inputs.
-  else if (clca(c) == 'n') op_n(g, x, y, c);          // north                Moves Northward, or bangs.
-  else if (clca(c) == 'o') op_o(g, x, y);             // read(x y read)       Reads operand with offset.
-  else if (clca(c) == 'p') op_p(g, x, y);             // push(len key val)    Writes eastward operand.
-  else if (clca(c) == 'q') op_q(g, x, y);             // query(x y len)       Reads operands with offset.
-  else if (clca(c) == 'r') op_r(g, x, y);             // random(min max)      Outputs random value.
-  else if (clca(c) == 's') op_s(g, x, y, c);          // south                Moves southward, or bangs.
-  else if (clca(c) == 't') op_t(g, x, y);             // track(key len val)   Reads eastward operand.
-  else if (clca(c) == 'u') op_u(g, x, y);             // uclid(step max)      Bangs on Euclidean rhythm.
-  else if (clca(c) == 'v') op_v(g, x, y);             // variable(write read) Reads and writes variable.
-  else if (clca(c) == 'w') op_w(g, x, y, c);          // west                 Moves westward, or bangs.
-  else if (clca(c) == 'x') op_x(g, x, y);             // write(x y val)       Writes operand with offset.
-  else if (clca(c) == 'y') op_y(g, x, y, c);          // jymper(val)          Outputs westward operand.
-  else if (clca(c) == 'z') op_z(g, x, y);             // lerp(rate target)    Transitions operand to input.
-  else if (clca(c) == '*') set_cell(g, x, y, '.');    // bang                 Bangs neighboring operands.
-  else if (clca(c) == '#') op_comment(g, x, y);       // comment              Halts a line.
-  else if (clca(c) == ':') op_midi(g, x, y);          // midi                 Sends a MIDI note.
+  set_type(g, x, y, Operator);
+  if      (clca(c) == 'a') op_a(g, x, y);           // add(a b)             Outputs sum of inputs.
+  else if (clca(c) == 'b') op_b(g, x, y);           // subtract(a b)        Outputs difference of inputs.
+  else if (clca(c) == 'c') op_c(g, x, y);           // clock(rate mod)      Outputs modulo of frame.
+  else if (clca(c) == 'd') op_d(g, x, y);           // delay(rate mod)      Bangs on modulo of frame.
+  else if (clca(c) == 'e') op_e(g, x, y, c);        // east                 Moves eastward, or bangs.
+  else if (clca(c) == 'f') op_f(g, x, y);           // if(a b)              Bangs if inputs are equal.
+  else if (clca(c) == 'g') op_g(g, x, y);           // generator(x y len)   Writes operands with offset.
+  else if (clca(c) == 'h') op_h(g, x, y);           // halt                 Halts southward operand.
+  else if (clca(c) == 'i') op_i(g, x, y);           // increment(step mod)  Increments southward operand.
+  else if (clca(c) == 'j') op_j(g, x, y, c);        // jumper(val)          Outputs northward operand.
+  else if (clca(c) == 'k') op_k(g, x, y);           // konkat(len)          Reads multiple variables.
+  else if (clca(c) == 'l') op_l(g, x, y);           // less(a b)            Outputs smallest of inputs.
+  else if (clca(c) == 'm') op_m(g, x, y);           // multiply(a b)        Outputs product of inputs.
+  else if (clca(c) == 'n') op_n(g, x, y, c);        // north                Moves Northward, or bangs.
+  else if (clca(c) == 'o') op_o(g, x, y);           // read(x y read)       Reads operand with offset.
+  else if (clca(c) == 'p') op_p(g, x, y);           // push(len key val)    Writes eastward operand.
+  else if (clca(c) == 'q') op_q(g, x, y);           // query(x y len)       Reads operands with offset.
+  else if (clca(c) == 'r') op_r(g, x, y);           // random(min max)      Outputs random value.
+  else if (clca(c) == 's') op_s(g, x, y, c);        // south                Moves southward, or bangs.
+  else if (clca(c) == 't') op_t(g, x, y);           // track(key len val)   Reads eastward operand.
+  else if (clca(c) == 'u') op_u(g, x, y);           // uclid(step max)      Bangs on Euclidean rhythm.
+  else if (clca(c) == 'v') op_v(g, x, y);           // variable(write read) Reads and writes variable.
+  else if (clca(c) == 'w') op_w(g, x, y, c);        // west                 Moves westward, or bangs.
+  else if (clca(c) == 'x') op_x(g, x, y);           // write(x y val)       Writes operand with offset.
+  else if (clca(c) == 'y') op_y(g, x, y, c);        // jymper(val)          Outputs westward operand.
+  else if (clca(c) == 'z') op_z(g, x, y);           // lerp(rate target)    Transitions operand to input.
+  else if (clca(c) == '*') set_cell(g, x, y, '.');  // bang                 Bangs neighboring operands.
+  else if (clca(c) == '#') op_comment(g, x, y);     // comment              Halts a line.
+  else if (clca(c) == ':') op_midi(g, x, y);        // midi                 Sends a MIDI note.
   else                     printf("Unknown operator[%d,%d]: %c\n", x, y, c);
 }
 
+// =======================================================================
+// ============================== Debugging ==============================
+// =======================================================================
+
 void
-print_grid_data(Grid* g)
+print_data_grid(Grid* g)
 {
-  for (int j = 0; j < g->height; j++) {
-    for (int i = 0; i < g->width; i++)
-      printf("%c", get_cell(g, i, j));
+  for   (int y = 0; y < g->height; y++) {
+    for (int x = 0; x < g->width;  x++)
+      printf("%c", get_cell(g, x, y));
     putchar('\n');
   }
   printf("========================================\n");
 }
 
 void
-print_grid_lock(Grid* g)
+print_lock_grid(Grid* g)
 {
-  for (int y = 0; y < g->height; y++) {
-    for (int x = 0; x < g->width; x++)
+  for   (int y = 0; y < g->height; y++) {
+    for (int x = 0; x < g->width;  x++)
       printf("%c", g->lock[x + y * g->width] ? '*' : '.');
     putchar('\n');
   }
@@ -822,15 +833,19 @@ print_grid_lock(Grid* g)
 }
 
 void
-print_grid_type(Grid* g)
+print_type_grid(Grid* g)
 {
-  for (int y = 0; y < g->height; y++) {
-    for (int x = 0; x < g->width; x++)
+  for   (int y = 0; y < g->height; y++) {
+    for (int x = 0; x < g->width;  x++)
       printf("%d", g->type[x + y * g->width]);
     putchar('\n');
   }
   printf("========================================\n");
 }
+
+// =====================================================================
+// ============================== Grid UI ==============================
+// =====================================================================
 
 void
 init_grid_frame(Grid* g)
@@ -839,15 +854,14 @@ init_grid_frame(Grid* g)
     g->lock[i] = false;
     g->type[i] = 0;
   }
-  for (int i = 0; i < 36; ++i)
-    g->var[i] = '.';
+  for (int i = 0; i < N_VARS; ++i)
+    g->vars[i] = '.';
 }
 
-int
+void
 run_grid(Grid* g)
 {
   init_grid_frame(g);
-  print_grid_type(g);
   for (int i = 0; i < g->length; ++i) {
     char c = g->data[i];
     int  x = i % g->width;
@@ -857,15 +871,14 @@ run_grid(Grid* g)
     if (c >= 'a' && c <= 'z' && !get_bang(g, x, y)) continue;
     operate(g, x, y, c);
   }
-  print_grid_type(g);
+  print_type_grid(g);
   g->frame++;
-  return 1;
 }
 
 void
 init_grid(Grid* g, int w, int h)
 {
-  g->width      = w;
+  g->width  = w;
   g->height = h;
   g->length = w * h;
   g->frame  = 0;
@@ -878,7 +891,7 @@ init_grid(Grid* g, int w, int h)
 int
 get_font(int x, int y, char c, int type, int sel)
 {
-  if (c >= 'A' && c <= 'Z')                        return c - 'A' + 36;
+  if (c >= 'A' && c <= 'Z')                        return c - 'A' + N_VARS;
   if (c >= 'a' && c <= 'z')                        return c - 'a' + 10;
   if (c >= '0' && c <= '9')                        return c - '0';
   if (c == '*')                                    return 62;
@@ -902,7 +915,7 @@ set_pixel(Uint32* dst, int x, int y, int color)
 void
 draw_icon(Uint32* dst, int x, int y, Uint8* icon, int fg, int bg)
 {
-  for (int v = 0; v < 8; v++)
+  for   (int v = 0; v < 8; v++)
     for (int h = 0; h < 8; h++) {
       int clr = (icon[v] >> (7 - h)) & 0x1;
       set_pixel(dst, x + h, y + v, clr == 1 ? fg : bg);
@@ -914,15 +927,15 @@ draw_ui(Uint32* dst)
 {
   int n = get_list_length(), bottom = VER * 8 + 8;
   // ---------- cursor -------------------
-  draw_icon(dst,  0 * 8, bottom, font[cursor.x % 36], 1                                   , 0);
-  draw_icon(dst,  1 * 8, bottom, font[68]           , 1                                   , 0);
-  draw_icon(dst,  2 * 8, bottom, font[cursor.y % 36], 1                                   , 0);
-  draw_icon(dst,  3 * 8, bottom, icons[2]           , cursor.w > 1 || cursor.h > 1 ? 4 : 3, 0);
+  draw_icon(dst,  0 * 8, bottom, font[cursor.x % N_VARS], 1                                   , 0);
+  draw_icon(dst,  1 * 8, bottom, font[68]               , 1                                   , 0);
+  draw_icon(dst,  2 * 8, bottom, font[cursor.y % N_VARS], 1                                   , 0);
+  draw_icon(dst,  3 * 8, bottom, icons[2]               , cursor.w > 1 || cursor.h > 1 ? 4 : 3, 0);
   // ---------- frame --------------------
-  draw_icon(dst,  5 * 8, bottom, font[(doc.grid.frame / 1296) % 36], 1                                , 0);
-  draw_icon(dst,  6 * 8, bottom, font[(doc.grid.frame / 36) % 36]  , 1                                , 0);
-  draw_icon(dst,  7 * 8, bottom, font[ doc.grid.frame % 36]        , 1                                , 0);
-  draw_icon(dst,  8 * 8, bottom, icons[PAUSE ? 1 : 0]          , (doc.grid.frame - 1) % 8 == 0 ? 2 : 3, 0);
+  draw_icon(dst,  5 * 8, bottom, font[(doc.grid.frame / 1296)   % N_VARS] , 1                                    , 0);
+  draw_icon(dst,  6 * 8, bottom, font[(doc.grid.frame / N_VARS) % N_VARS] , 1                                    , 0);
+  draw_icon(dst,  7 * 8, bottom, font[ doc.grid.frame % N_VARS]           , 1                                    , 0);
+  draw_icon(dst,  8 * 8, bottom, icons[PAUSE ? 1 : 0]                     , (doc.grid.frame - 1) % 8 == 0 ? 2 : 3, 0);
   // ---------- speed --------------------
   draw_icon(dst, 10 * 8, bottom, font[(BPM / 100) % 10], 1, 0);
   draw_icon(dst, 11 * 8, bottom, font[(BPM / 10) % 10] , 1, 0);
@@ -937,54 +950,49 @@ draw_ui(Uint32* dst)
 void
 redraw(Uint32* dst)
 {
-  Rect2d* r = &cursor;
-  for (int y = 0; y < VER; ++y) {
+  Rect* r = &cursor;
+  for   (int y = 0; y < VER; ++y) {
     for (int x = 0; x < HOR; ++x) {
-      int    sel     = x < r->x + r->w && 
-                       x >= r->x       && 
-                       y < r->y + r->h && 
-                       y >= r->y;
-      int    t       = get_type(&doc.grid, x, y);
-      Uint8* letter  = font[get_font(x, y, get_cell(&doc.grid, x, y), t, sel)];
-      int fg = 0, bg = 0;
-      if ((sel && !MODE) || (sel && MODE && doc.grid.frame % 2)) {
-        fg = 0; bg = 4;
-      } else {
-        if      (t == 1) fg = 3;
-        else if (t == 2) fg = 1;
-        else if (t == 3) bg = 1;
-        else if (t == 4) fg = 2;
-        else if (t == 5) bg = 2;
-        else             fg = 3;
-      }
+      bool     sel    = x < r->x + r->w && 
+                        x >= r->x       && 
+                        y < r->y + r->h && 
+                        y >= r->y;
+      CellType t      = get_type(&doc.grid, x, y);
+      Uint8*   letter = font[get_font(x, y, get_cell(&doc.grid, x, y), t, sel)];
+      int      fg     = 0;
+	  int      bg     = 0;
+      if ((sel && !MODE) || (sel && MODE && doc.grid.frame % 2)) { fg = 0; bg = 4; }
+      else if (t == Comment)    fg = 3;
+      else if (t == LeftInput)  fg = 1;
+      else if (t == Operator)   bg = 1;
+      else if (t == RightInput) fg = 2;
+      else if (t == Output)     bg = 2;
+      else                      fg = 3;
       draw_icon(dst, x * 8, y * 8, letter, fg, bg);
     }
   }
   draw_ui(dst);
-  SDL_UpdateTexture(gTexture, NULL, dst, WIDTH * sizeof(Uint32));
-  SDL_RenderClear(gRenderer);
-  SDL_RenderCopy(gRenderer, gTexture, NULL, NULL);
-  SDL_RenderPresent(gRenderer);
+  SDL_UpdateTexture (gTexture, NULL, dst, WIDTH * sizeof(Uint32));
+  SDL_RenderClear   (gRenderer);
+  SDL_RenderCopy    (gRenderer, gTexture, NULL, NULL);
+  SDL_RenderPresent (gRenderer);
 }
 
-int
-error(char* msg, const char* err)
-{
-  printf("Error %s: %s\n", msg, err);
-  return 0;
-}
+// =======================================================================
+// ============================== Documents ==============================
+// =======================================================================
 
 void
 make_doc(Document* d, char* name)
 {
   init_grid(&d->grid, HOR, VER);
   d->unsaved = false;
-  scpy(name, d->name, 256);
+  scpy(name, d->name, FILE_NAME_SIZE);
   redraw(pixels);
   printf("Made: %s\n", name);
 }
 
-int
+bool
 open_doc(Document* d, char* name)
 {
   char c;
@@ -993,46 +1001,41 @@ open_doc(Document* d, char* name)
   if (!f) return error("Load", "Invalid input file");
   init_grid(&d->grid, HOR, VER);
   while ((c = fgetc(f)) != EOF && d->grid.length <= MAXSZ) {
-    if (c == '\n') {
-      x = 0;
-      y++;
-    } else {
-      set_cell(&d->grid, x, y, c);
-      x++;
-    }
+    if   (c == '\n') { x = 0; y++; }
+    else             { set_cell(&d->grid, x, y, c); x++; }
   }
   d->unsaved = false;
-  scpy(name, d->name, 256);
+  scpy(name, d->name, FILE_NAME_SIZE);
   redraw(pixels);
   printf("Opened: %s\n", name);
-  return 1;
+  return true;
 }
 
 void
 save_doc(Document* d, char* name)
 {
   FILE* f = fopen(name, "w");
-  for (int y = 0; y < d->grid.height; ++y) {
-    for (int x = 0; x < d->grid.width; ++x)
+  for   (int y = 0; y < d->grid.height; ++y) {
+    for (int x = 0; x < d->grid.width;  ++x)
       fputc(get_cell(&d->grid, x, y), f);
     fputc('\n', f);
   }
   fclose(f);
   d->unsaved = false;
-  scpy(name, d->name, 256);
+  scpy(name, d->name, FILE_NAME_SIZE);
   redraw(pixels);
   printf("Saved: %s\n", name);
 }
 
 void
-transform(Rect2d* r, char (*fn)(char))
+transform(Rect* r, char (*fn)(char))
 {
-  for (int y = 0; y < r->h; ++y)
-    for (int x = 0; x < r->w; ++x)
-      set_cell(&doc.grid,
-              r->x + x,
-              r->y + y,
-              fn(get_cell(&doc.grid, r->x + x, r->y + y)));
+  for   (int y = 0; y < r->h; ++y)
+    for (int x = 0; x < r->w; ++x) {
+      int x_ = r->x + x;
+      int y_ = r->y + y;
+      set_cell(&doc.grid, x_, y_, fn(get_cell(&doc.grid, x_, y_)));
+    }
   redraw(pixels);
 }
 
@@ -1046,7 +1049,7 @@ set_option(int* i, int v)
 void
 select1(int x, int y, int w, int h)
 {
-  Rect2d r;
+  Rect r;
   r.x = clamp(x, 0, HOR - 1);
   r.y = clamp(y, 0, VER - 1);
   r.w = clamp(w, 1, HOR - x);
@@ -1087,11 +1090,11 @@ reset(void)
 }
 
 void
-comment(Rect2d* r)
+comment(Rect* r)
 {
   char c = get_cell(&doc.grid, r->x, r->y) == '#' ? '.' : '#';
   for (int y = 0; y < r->h; ++y) {
-    set_cell(&doc.grid, r->x, r->y + y, c);
+    set_cell(&doc.grid, r->x           , r->y + y, c);
     set_cell(&doc.grid, r->x + r->w - 1, r->y + y, c);
   }
   doc.unsaved = true;
@@ -1101,7 +1104,7 @@ comment(Rect2d* r)
 void
 insert(char c)
 {
-  for (int x = 0; x < cursor.w; ++x)
+  for   (int x = 0; x < cursor.w; ++x)
     for (int y = 0; y < cursor.h; ++y)
       set_cell(&doc.grid, cursor.x + x, cursor.y + y, c);
   if (MODE) move(1, 0, 0);
@@ -1119,9 +1122,9 @@ frame(void)
 void
 select_option(int option)
 {
-  if      (option == 3      ) select1(cursor.x, cursor.y, 1, 1);
-  else if (option == 8      ) { PAUSE = 1; frame(); }
-  else if (option == 15     ) set_option(&GUIDES, !GUIDES);
+  if      (option == 3)       select1(cursor.x, cursor.y, 1, 1);
+  else if (option == 8)       { PAUSE = 1; frame(); }
+  else if (option == 15)      set_option(&GUIDES, !GUIDES);
   else if (option == HOR - 1) save_doc(&doc, doc.name);
 }
 
@@ -1129,18 +1132,19 @@ void
 quit()
 {
   free(pixels);
-  SDL_DestroyTexture(gTexture);   gTexture  = NULL;
-  SDL_DestroyRenderer(gRenderer); gRenderer = NULL;
-  SDL_DestroyWindow(gWindow);     gWindow   = NULL;
+  SDL_DestroyTexture(gTexture);
+  SDL_DestroyRenderer(gRenderer);
+  SDL_DestroyWindow(gWindow);
   SDL_Quit();
+  jack_client_close(client);
   exit(0);
 }
 
 void
-copy_clip(Rect2d* r, char* c)
+copy_clip(Rect* r, char* c)
 {
   int i = 0;
-  for (int y = 0; y < r->h; ++y) {
+  for   (int y = 0; y < r->h; ++y) {
     for (int x = 0; x < r->w; ++x)
       c[i++] = get_cell(&doc.grid, r->x + x, r->y + y);
     c[i++] = '\n';
@@ -1150,32 +1154,29 @@ copy_clip(Rect2d* r, char* c)
 }
 
 void
-cut_clip(Rect2d* r, char* c)
+cut_clip(Rect* r, char* c)
 {
   copy_clip(r, c);
   insert('.');
 }
 
 void
-paste_clip(Rect2d* r, char* c, int insert)
+paste_clip(Rect* r, char* c, int insert)
 {
   char ch;
-  int i = 0, x = r->x, y = r->y;
+  int i = 0;
+  int x = r->x;
+  int y = r->y;
   while ((ch = c[i++])) {
-    if (ch == '\n') {
-      x = r->x;
-      y++;
-    } else {
-      set_cell(&doc.grid, x, y, insert && ch == '.' ? get_cell(&doc.grid, x, y) : ch);
-      x++;
-    }
+    if   (ch == '\n') { x = r->x; y++; }
+    else              { set_cell(&doc.grid, x, y, insert && ch == '.' ? get_cell(&doc.grid, x, y) : ch); x++; }
   }
   doc.unsaved = true;
   redraw(pixels);
 }
 
 void
-move_clip(Rect2d* r, char* c, int x, int y, int skip)
+move_clip(Rect* r, char* c, int x, int y, int skip)
 {
   copy_clip(r, c);
   insert('.');
@@ -1197,8 +1198,7 @@ do_mouse(SDL_Event* event)
       else                 { select1(cx, cy, 1, 1); DOWN = 1; }
       break;
     case SDL_MOUSEMOTION:
-      if (DOWN)
-        select1(cursor.x, cursor.y, cx + 1 - cursor.x, cy + 1 - cursor.y);
+      if (DOWN) select1(cursor.x, cursor.y, cx + 1 - cursor.x, cy + 1 - cursor.y);
       break;
   }
 }
@@ -1228,14 +1228,15 @@ do_key(SDL_Event* event)
     else if (event->key.keysym.sym == SDLK_LEFT)         move_clip(&cursor, clip, -1,  0, alt);
     else if (event->key.keysym.sym == SDLK_RIGHT)        move_clip(&cursor, clip,  1,  0, alt);
     else if (event->key.keysym.sym == SDLK_SLASH)        comment(&cursor);
+    else if (event->key.keysym.sym == SDLK_q)            quit();
   } else {
     if 	    (event->key.keysym.sym == SDLK_ESCAPE)       reset();
     else if (event->key.keysym.sym == SDLK_PAGEUP)       set_option(&BPM, BPM + 1);
     else if (event->key.keysym.sym == SDLK_PAGEDOWN)     set_option(&BPM, BPM - 1);
-    else if (event->key.keysym.sym == SDLK_UP)           shift ? scale(0, -1, alt) : move(0, -1, alt);
-    else if (event->key.keysym.sym == SDLK_DOWN)         shift ? scale(0, 1, alt) : move(0, 1, alt);
-    else if (event->key.keysym.sym == SDLK_LEFT)         shift ? scale(-1, 0, alt) : move(-1, 0, alt);
-    else if (event->key.keysym.sym == SDLK_RIGHT)        shift ? scale(1, 0, alt) : move(1, 0, alt);
+    else if (event->key.keysym.sym == SDLK_UP)           shift ? scale( 0, -1, alt) : move( 0, -1, alt);
+    else if (event->key.keysym.sym == SDLK_DOWN)         shift ? scale( 0,  1, alt) : move( 0,  1, alt);
+    else if (event->key.keysym.sym == SDLK_LEFT)         shift ? scale(-1,  0, alt) : move(-1,  0, alt);
+    else if (event->key.keysym.sym == SDLK_RIGHT)        shift ? scale( 1,  0, alt) : move( 1,  0, alt);
     else if (event->key.keysym.sym == SDLK_SPACE)        { if (!MODE) set_option(&PAUSE, !PAUSE); }
     else if (event->key.keysym.sym == SDLK_BACKSPACE)    { insert('.'); if (MODE) move(-2, 0, alt); }
   }
@@ -1251,29 +1252,27 @@ do_text(SDL_Event* event)
   }
 }
 
-int
+bool
 init()
 {
   if (SDL_Init(SDL_INIT_VIDEO) < 0) return error("Init", SDL_GetError());
 
-  gWindow       =  SDL_CreateWindow("Orca", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIDTH * ZOOM, HEIGHT * ZOOM, SDL_WINDOW_SHOWN);
-  if (gWindow   == NULL) return error("Window", SDL_GetError());
-  gRenderer     =  SDL_CreateRenderer(gWindow, -1, 0);
-  if (gRenderer == NULL) return error("Renderer", SDL_GetError());
-  gTexture      =  SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, WIDTH, HEIGHT);
-  if (gTexture  == NULL) return error("Texture", SDL_GetError());
-  pixels        =  (Uint32*)malloc(WIDTH * HEIGHT * sizeof(Uint32));
-  if (pixels    == NULL) return error("Pixels", "Failed to allocate memory");
+  gWindow   = SDL_CreateWindow("Orca", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIDTH * ZOOM, HEIGHT * ZOOM, SDL_WINDOW_SHOWN); if (gWindow   == NULL) return error("Window",   SDL_GetError());
+  gRenderer = SDL_CreateRenderer(gWindow, -1, 0);                                                                                        if (gRenderer == NULL) return error("Renderer", SDL_GetError());
+  gTexture  = SDL_CreateTexture(gRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, WIDTH, HEIGHT);                           if (gTexture  == NULL) return error("Texture",  SDL_GetError());
+  pixels    = malloc(WIDTH * HEIGHT * sizeof *pixels);                                                                                   if (pixels    == NULL) return error("Pixels",   "Failed to allocate memory");
 
-  for (int i = 0; i < HEIGHT; i++)
-    for (int j = 0; j < WIDTH; j++)
-      pixels[i * WIDTH + j] = theme[0];
+  for   (int y = 0; y < HEIGHT; y++)
+    for (int x = 0; x < WIDTH ; x++)
+      pixels[x + y * WIDTH] = theme[0];
 
   init_midi();
-  return 1;
+  return true;
 }
 
+// ==================================================================  
 // ============================== Main ==============================  
+// ==================================================================  
 
 int
 main(int argc, char* argv[])
@@ -1303,5 +1302,4 @@ main(int argc, char* argv[])
       else if (event.type == SDL_WINDOWEVENT)     { if (event.window.event == SDL_WINDOWEVENT_EXPOSED) redraw(pixels); }
     }
   }
-  quit();
 }
