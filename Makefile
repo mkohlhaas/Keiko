@@ -16,6 +16,7 @@ ifeq ($(BUILD_MODE),DEBUG)
 endif
 
 all: $(binaries)
-
 clean:
 	@rm -f $(binaries) 
+
+keiko: keiko.h
