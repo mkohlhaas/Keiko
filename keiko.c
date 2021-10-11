@@ -296,32 +296,32 @@ operate(Grid* g, int x, int y, char op)
   else if (op == 'B') op_b(g, x, y);           // subtract(a b)        Outputs difference of inputs.
   else if (op == 'C') op_c(g, x, y);           // clock(rate mod)      Outputs modulo of frame.
   else if (op == 'D') op_d(g, x, y);           // delay(rate mod)      Bangs on modulo of frame.
-  else if (op == 'E') op_e(g, x, y, op);        // east                 Moves eastward, or bangs.
+  else if (op == 'E') op_e(g, x, y, op);       // east                 Moves eastward, or bangs.
   else if (op == 'F') op_f(g, x, y);           // if(a b)              Bangs if inputs are equal.
   else if (op == 'G') op_g(g, x, y);           // generator(x y len)   Writes operands with offset.
   else if (op == 'H') op_h(g, x, y);           // halt                 Halts southward operand.
   else if (op == 'I') op_i(g, x, y);           // increment(step mod)  Increments southward operand.
-  else if (op == 'J') op_j(g, x, y, op);        // jumper(val)          Outputs northward operand.
+  else if (op == 'J') op_j(g, x, y, op);       // jumper(val)          Outputs northward operand.
   else if (op == 'K') op_k(g, x, y);           // konkat(len)          Reads multiple variables.
   else if (op == 'L') op_l(g, x, y);           // less(a b)            Outputs smallest of inputs.
   else if (op == 'M') op_m(g, x, y);           // multiply(a b)        Outputs product of inputs.
-  else if (op == 'N') op_n(g, x, y, op);        // north                Moves Northward, or bangs.
+  else if (op == 'N') op_n(g, x, y, op);       // north                Moves Northward, or bangs.
   else if (op == 'O') op_o(g, x, y);           // read(x y read)       Reads operand with offset.
   else if (op == 'P') op_p(g, x, y);           // push(len key val)    Writes eastward operand.
   else if (op == 'Q') op_q(g, x, y);           // query(x y len)       Reads operands with offset.
   else if (op == 'R') op_r(g, x, y);           // random(min max)      Outputs random value.
-  else if (op == 'S') op_s(g, x, y, op);        // south                Moves southward, or bangs.
+  else if (op == 'S') op_s(g, x, y, op);       // south                Moves southward, or bangs.
   else if (op == 'T') op_t(g, x, y);           // track(key len val)   Reads eastward operand.
   else if (op == 'U') op_u(g, x, y);           // uclid(step max)      Bangs on Euclidean rhythm.
   else if (op == 'V') op_v(g, x, y);           // variable(write read) Reads and writes variable.
-  else if (op == 'W') op_w(g, x, y, op);        // west                 Moves westward, or bangs.
+  else if (op == 'W') op_w(g, x, y, op);       // west                 Moves westward, or bangs.
   else if (op == 'X') op_x(g, x, y);           // write(x y val)       Writes operand with offset.
-  else if (op == 'Y') op_y(g, x, y, op);        // jymper(val)          Outputs westward operand.
+  else if (op == 'Y') op_y(g, x, y, op);       // jymper(val)          Outputs westward operand.
   else if (op == 'Z') op_z(g, x, y);           // lerp(rate target)    Transitions operand to input.
   else if (op == '*') set_cell(g, x, y, '.');  // bang                 Bangs neighboring operands.
   else if (op == '#') op_comment(g, x, y);     // comment              Halts a line.
   else if (op == ':') op_midi(g, x, y);        // midi                 Sends a MIDI note.
-  else                     printf("Unknown operator[%d,%d]: %c\n", x, y, op);
+  else                printf("Unknown operator[%d,%d]: %c\n", x, y, op);
 }
 
 // add(a b); Outputs sum of inputs.
@@ -747,8 +747,8 @@ draw_ui(Uint32* dst)
   draw_icon(dst,  8 * 8, bottom, icons[PAUSE ? 1 : 0]                     , (doc.grid.frame - 1) % 8 == 0 ? 2 : 3, 0);
   // ---------- speed --------------------
   draw_icon(dst, 10 * 8, bottom, font[(BPM / 100) % 10], 1, 0);
-  draw_icon(dst, 11 * 8, bottom, font[(BPM / 10) % 10] , 1, 0);
-  draw_icon(dst, 12 * 8, bottom, font[ BPM % 10]       , 1, 0);
+  draw_icon(dst, 11 * 8, bottom, font[(BPM /  10) % 10], 1, 0);
+  draw_icon(dst, 12 * 8, bottom, font[ BPM %  10]      , 1, 0);
   // ---------- io -----------------------
   draw_icon(dst, 13 * 8, bottom, n > 0 ? icons[2 + clamp(n, 0, 6)] : font[70], 2, 0);
   // ---------- generics -----------------
@@ -1126,7 +1126,7 @@ main(int argc, char* argv[])
     SDL_Event event;
     double elapsed, start = SDL_GetPerformanceCounter();
     if (!PAUSE) {
-      if   (tick > 3) { frame(); tick = 0; } 
+      if   (tick > 7) { frame(); tick = 0; } 
       else            { tick++; }
     }
     elapsed = (SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency() * 1000.0f;
