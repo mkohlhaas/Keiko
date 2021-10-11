@@ -35,7 +35,7 @@ typedef struct
   int    random;       // seed value for random number generator; default = 1
   Uint8  vars[N_VARS];
   Uint8  data[MAXSZ];
-  bool   lock[MAXSZ];  // true = deactivate cell
+  bool   lock[MAXSZ];  // true = deactivate cell = cell does not contain an operator; false = cell contains a value
   Type   type[MAXSZ];  // determines color representation
 } Grid;
 
@@ -202,7 +202,7 @@ char*  scpy(char* src, char* dst, int len);
 char   get_cell(Grid* g, int x, int y);
 void   set_cell(Grid* g, int x, int y, char c);
 Type   get_type(Grid* g, int x, int y);
-void   set_type(Grid* g, int x, int y, int t);
+void   set_type(Grid* g, int x, int y, int type);
 void   set_lock(Grid* g, int x, int y);
 void   set_port(Grid* g, int x, int y, char c);
 int    get_port(Grid* g, int x, int y, bool lock);

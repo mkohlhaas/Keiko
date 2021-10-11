@@ -17,7 +17,8 @@ cisp(char c)
   return c == '.' || c == ':' || c == '#' || c == '*';
 }
 
-// result has same case as c
+// int 'v' to char
+// result has same case as 'c'
 char
 cchr(int v, char c)
 {
@@ -26,7 +27,7 @@ cchr(int v, char c)
   return (c >= 'A' && c <= 'Z' ? 'A' : 'a') + v - 10;
 }
 
-// char to int; 0 <= int <= 35
+// char to 0 <= int <= 35
 int
 cb36(char c)
 {
@@ -53,13 +54,13 @@ clca(char c)
 char
 cinc(char c)
 {
-  return !cisp(c) ? cchr(cb36(c) + 1, c) : c;
+  return cisp(c) ? c : cchr(cb36(c) + 1, c);
 }
 
 char
 cdec(char c)
 {
-  return !cisp(c) ? cchr(cb36(c) - 1, c) : c;
+  return cisp(c) ? c : cchr(cb36(c) - 1, c);
 }
 
 bool
@@ -118,13 +119,15 @@ get_type(Grid* g, int x, int y)
   return NoOp;
 }
 
+// set cell's coloring
 void
-set_type(Grid* g, int x, int y, int t)
+set_type(Grid* g, int x, int y, int type)
 {
   if (valid_position(g, x, y))
-    g->type[x + (y * g->width)] = t;
+    g->type[x + (y * g->width)] = type;
 }
 
+// deactivate cell (cell contains number/value but not operator)
 void
 set_lock(Grid* g, int x, int y)
 {
@@ -139,7 +142,7 @@ set_lock(Grid* g, int x, int y)
 void
 set_port(Grid* g, int x, int y, char c)
 {
-  set_lock(g, x, y);
+  set_lock(g, x, y);          // output will not turn into an operator
   set_type(g, x, y, Output);
   set_cell(g, x, y, c);
 }
@@ -149,7 +152,7 @@ int
 get_port(Grid* g, int x, int y, bool lock)
 {
   if (lock) {
-    set_lock(g, x, y);
+    set_lock(g, x, y);              // right-hand side of operator cannot be an operator
     set_type(g, x, y, RightInput);
   } else
     set_type(g, x, y, LeftInput);
@@ -170,11 +173,7 @@ get_list_length()
 {
   size_t    n    = 0;
   MidiList* list = voices;
-
-  while (list) {
-    n++;
-    list = list->next;
-  }
+  while (list) { n++; list = list->next; }
   return n;
 }
 
@@ -267,14 +266,15 @@ void
 run_grid(Grid* g)
 {
   init_grid_frame(g);
-  for (int i = 0; i < g->length; ++i) {
+  for (int i = 0; i < g->length; i++) {
     char c = g->data[i];
     int  x = i % g->width;
     int  y = i / g->width;
-    if (c == '.' || g->lock[i])                     continue;
-    if (c >= '0' && c <= '9')                       continue;
-    if (c >= 'a' && c <= 'z' && !get_bang(g, x, y)) continue;
-    operate(g, x, y, c);
+    if      (c == '.')                                   continue;
+    else if (g->lock[i])                                 continue;
+    else if (c >= '0' && c <= '9')                       continue;
+    else if (c >= 'a' && c <= 'z' && !get_bang(g, x, y)) continue;
+    else                                                 operate(g, x, y, c);
   }
   print_type_grid(g);
   g->frame++;
@@ -283,12 +283,9 @@ run_grid(Grid* g)
 void
 init_grid_frame(Grid* g)
 {
-  for (int i = 0; i < g->length; ++i) {
-    g->lock[i] = false;
-    g->type[i] = NoOp;
-  }
-  for (int i = 0; i < N_VARS; ++i)
-    g->vars[i] = '.';
+  memset(g->lock, false, MAXSZ * sizeof *g->lock);
+  memset(g->type, NoOp,  MAXSZ * sizeof *g->type);
+  memset(g->vars, '.',  N_VARS * sizeof *g->vars);
 }
 
 void
@@ -399,7 +396,7 @@ op_g(Grid* g, int x, int y)
   char py   = get_port(g, x - 2, y, false);
   char len  = get_port(g, x - 1, y, false);
   int  len_ = cb36(len); if (!len_) len_ = 1;
-  for (int i = 0; i < len_; ++i)
+  for (int i = 0; i < len_; i++)
     set_port(g, x + i + cb36(px), y + 1 + cb36(py), get_port(g, x + 1 + i, y, true));
 }
 
@@ -429,7 +426,7 @@ op_j(Grid* g, int x, int y, char c)
   char link = get_port(g, x, y - 1, false);
   if (link != c) {
     int i;
-    for (i = 1; y + i < g->height; ++i)
+    for (i = 1; y + i < g->height; i++)
       if (get_cell(g, x, y + i) != c) break;
     set_port(g, x, y + i, link);
   }
@@ -441,7 +438,7 @@ op_k(Grid* g, int x, int y)
 {
   char len  = get_port(g, x - 1, y, false);
   int  len_ = cb36(len); if (!len_) len_ = 1;
-  for (int i = 0; i < len_; ++i) {
+  for (int i = 0; i < len_; i++) {
     char key =      get_port(g, x + 1 + i, y    , true);
     if (key != '.') set_port(g, x + 1 + i, y + 1, g->vars[cb36(key)]);
   }
@@ -496,8 +493,8 @@ op_p(Grid* g, int x, int y)
   char len  = get_port(g, x - 1, y, false);
   char val  = get_port(g, x + 1, y, true);
   int  len_ = cb36(len); if (!len_) len_ = 1;
-  for (int i = 0; i < len_; ++i)
-    set_lock(g, x + i, y + 1);
+  for (int i = 0; i < len_; i++)
+    set_lock(g, x + i, y + 1);                      // can only be values not operators
   set_port(g, x + (cb36(key) % len_), y + 1, val);
 }
 
@@ -509,7 +506,7 @@ op_q(Grid* g, int x, int y)
   char py   = get_port(g, x - 2, y, false);
   char len  = get_port(g, x - 1, y, false);
   int  len_ = cb36(len); if (!len_) len_ = 1;
-  for (int i = 0; i < len_; ++i)
+  for (int i = 0; i < len_; i++)
     set_port(g, x + 1 - len_ + i, y + 1, get_port(g, x + 1 + cb36(px) + i, y + cb36(py), true));
 }
 
@@ -551,8 +548,8 @@ op_t(Grid* g, int x, int y)
   char key  = get_port(g, x - 2, y, false);
   char len  = get_port(g, x - 1, y, false);
   int  len_ = cb36(len); if (!len_) len_ = 1;
-  for (int i = 0; i < len_; ++i)
-    set_lock(g, x + 1 + i, y);
+  for (int i = 0; i < len_; i++)
+    set_lock(g, x + 1 + i, y);  // can only be values not operators
   set_port(g, x, y + 1, get_port(g, x + 1 + (cb36(key) % len_), y, true));
 }
 
@@ -609,7 +606,7 @@ op_y(Grid* g, int x, int y, char c)
   int i;
   char link = get_port(g, x - 1, y, false);
   if (link != c) {
-    for (i = 1; x + i < g->width; ++i)
+    for (i = 1; x + i < g->width; i++)
       if (get_cell(g, x + i, y) != c) break;
     set_port(g, x + i, y, link);
   }
@@ -634,8 +631,8 @@ op_z(Grid* g, int x, int y)
 void
 op_comment(Grid* g, int x, int y)
 {
-  for (int i = 1; x + i < g->width; ++i) {
-    set_lock(g, x + i, y);
+  for (int i = 1; x + i < g->width; i++) {
+    set_lock(g, x + i, y);  // deactivate cells
     if (get_cell(g, x + i, y) == '#') break;
   }
   set_type(g, x, y, Comment);
@@ -764,8 +761,8 @@ void
 redraw(Uint32* dst)
 {
   Rect* r = &cursor;
-  for   (int y = 0; y < VER; ++y) {
-    for (int x = 0; x < HOR; ++x) {
+  for   (int y = 0; y < VER; y++) {
+    for (int x = 0; x < HOR; x++) {
       bool   sel    = x < r->x + r->w && 
                       x >= r->x       && 
                       y < r->y + r->h && 
@@ -803,8 +800,7 @@ init_grid(Grid* g, int w, int h)
   g->length = w * h;
   g->frame  = 0;
   g->random = 1;
-  for (int i = 0; i < g->length; ++i)
-    set_cell(g, i % g->width, i / g->width, '.');
+  memset(g->data, '.', MAXSZ * sizeof *g->data);
   init_grid_frame(g);
 }
 
@@ -841,8 +837,8 @@ void
 save_doc(Document* d, char* name)
 {
   FILE* f = fopen(name, "w");
-  for   (int y = 0; y < d->grid.height; ++y) {
-    for (int x = 0; x < d->grid.width;  ++x)
+  for   (int y = 0; y < d->grid.height; y++) {
+    for (int x = 0; x < d->grid.width;  x++)
       fputc(get_cell(&d->grid, x, y), f);
     fputc('\n', f);
   }
@@ -856,8 +852,8 @@ save_doc(Document* d, char* name)
 void
 transform(Rect* r, char (*fn)(char))
 {
-  for   (int y = 0; y < r->h; ++y)
-    for (int x = 0; x < r->w; ++x) {
+  for   (int y = 0; y < r->h; y++)
+    for (int x = 0; x < r->w; x++) {
       int x_ = r->x + x;
       int y_ = r->y + y;
       set_cell(&doc.grid, x_, y_, fn(get_cell(&doc.grid, x_, y_)));
@@ -919,7 +915,7 @@ void
 comment(Rect* r)
 {
   char c = get_cell(&doc.grid, r->x, r->y) == '#' ? '.' : '#';
-  for (int y = 0; y < r->h; ++y) {
+  for (int y = 0; y < r->h; y++) {
     set_cell(&doc.grid, r->x           , r->y + y, c);
     set_cell(&doc.grid, r->x + r->w - 1, r->y + y, c);
   }
@@ -930,8 +926,8 @@ comment(Rect* r)
 void
 insert(char c)
 {
-  for   (int x = 0; x < cursor.w; ++x)
-    for (int y = 0; y < cursor.h; ++y)
+  for   (int x = 0; x < cursor.w; x++)
+    for (int y = 0; y < cursor.h; y++)
       set_cell(&doc.grid, cursor.x + x, cursor.y + y, c);
   if (MODE) move(1, 0, 0);
   doc.unsaved = true;
@@ -951,8 +947,8 @@ void
 copy_clip(Rect* r, char* c)
 {
   int i = 0;
-  for   (int y = 0; y < r->h; ++y) {
-    for (int x = 0; x < r->w; ++x)
+  for   (int y = 0; y < r->h; y++) {
+    for (int x = 0; x < r->w; x++)
       c[i++] = get_cell(&doc.grid, r->x + x, r->y + y);
     c[i++] = '\n';
   }
@@ -1052,7 +1048,7 @@ do_key(SDL_Event* event)
 void
 do_text(SDL_Event* event)
 {
-  for (int i = 0; i < SDL_TEXTINPUTEVENT_TEXT_SIZE; ++i) {
+  for (int i = 0; i < SDL_TEXTINPUTEVENT_TEXT_SIZE; i++) {
     char c = event->text.text[i];
     if (c < ' ' || c > '~') break;
     insert(c);
@@ -1080,7 +1076,7 @@ create_texture()
 bool
 create_pixelbufer()
 {
-  return pixels = malloc(WIDTH * HEIGHT * sizeof *pixels);
+  return pixels = calloc(WIDTH * HEIGHT, sizeof *pixels);
 }
 
 bool
@@ -1098,8 +1094,6 @@ init()
 {
   if (SDL_Init(SDL_INIT_VIDEO) < 0) return error("Init", SDL_GetError());
   if (!create_ui())                 return error("Init", "UI creation failed");
-  for (int i = 0; i < HEIGHT * WIDTH; i++)
-    pixels[i] = theme[0];
   init_midi();
   return true;
 }
