@@ -75,7 +75,7 @@ valid_character(char c)
   return cb36(c) || c == '0' || cisp(c);
 }
 
-// char to midi note?
+// char to note (used in send_midi)
 int
 ctbl(char c)
 {
@@ -121,7 +121,7 @@ get_type(Grid* g, int x, int y)
 
 // set cell's coloring
 void
-set_type(Grid* g, int x, int y, int type)
+set_type(Grid* g, int x, int y, Type type)
 {
   if (valid_position(g, x, y))
     g->type[x + (y * g->width)] = type;
@@ -142,7 +142,7 @@ set_lock(Grid* g, int x, int y)
 void
 set_port(Grid* g, int x, int y, char c)
 {
-  set_lock(g, x, y);          // output will not turn into an operator
+  set_lock(g, x, y);          // output is a value; will not turn into an operator
   set_type(g, x, y, Output);
   set_cell(g, x, y, c);
 }
@@ -160,7 +160,7 @@ get_port(Grid* g, int x, int y, bool lock)
 }
 
 bool
-get_bang(Grid* g, int x, int y)
+bangged(Grid* g, int x, int y)
 {
   return get_cell(g, x - 1, y    ) == '*' ||
          get_cell(g, x + 1, y    ) == '*' ||
@@ -189,7 +189,7 @@ error(char* msg, const char* err)
 // ==================================================================  
 
 int
-process(jack_nframes_t nframes, void* arg)
+process(jack_nframes_t n_frames, void* arg)
 {
   MidiList*         note_to_delete;
   jack_midi_data_t* buffer;
@@ -206,7 +206,7 @@ process(jack_nframes_t nframes, void* arg)
       buffer[1]  = n->value;
       buffer[2]  = n->velocity;
     } else {
-      n->length -= nframes;
+      n->length -= n_frames;
       if (n->length < 0) {
         buffer         = jack_midi_event_reserve(port_buf, 0, 3);
         buffer[0]      = 0x80 + n->channel;
@@ -232,7 +232,7 @@ send_midi(int channel, int value, int velocity, int length)
   ml->note.channel  = channel;
   ml->note.value    = value;
   ml->note.velocity = velocity * 3;
-  ml->note.length   = length * 60 / (float)BPM * jack_get_sample_rate(client);
+  ml->note.length   = length * ( 60 / (float)BPM ) * jack_get_sample_rate(client);
   ml->note.trigger  = true;
 }
 
@@ -270,13 +270,13 @@ run_grid(Grid* g)
     char c = g->data[i];
     int  x = i % g->width;
     int  y = i / g->width;
-    if      (c == '.')                                   continue;
-    else if (g->lock[i])                                 continue;
-    else if (c >= '0' && c <= '9')                       continue;
-    else if (c >= 'a' && c <= 'z' && !get_bang(g, x, y)) continue;
-    else                                                 operate(g, x, y, c);
+    if      (c == '.')                                  continue;
+    else if (g->lock[i])                                continue;
+    else if (c >= '0' && c <= '9')                      continue;
+    else if (c >= 'a' && c <= 'z' && !bangged(g, x, y)) continue;
+    else                                                operate(g, x, y, c);
   }
-  print_type_grid(g);
+  print_lock_grid(g);
   g->frame++;
 }
 
@@ -289,40 +289,39 @@ init_grid_frame(Grid* g)
 }
 
 void
-operate(Grid* g, int x, int y, char c)
+operate(Grid* g, int x, int y, char op)
 {
   set_type(g, x, y, Operator);
-  char op = clca(c);
-  if      (op == 'a') op_a(g, x, y);           // add(a b)             Outputs sum of inputs.
-  else if (op == 'b') op_b(g, x, y);           // subtract(a b)        Outputs difference of inputs.
-  else if (op == 'c') op_c(g, x, y);           // clock(rate mod)      Outputs modulo of frame.
-  else if (op == 'd') op_d(g, x, y);           // delay(rate mod)      Bangs on modulo of frame.
-  else if (op == 'e') op_e(g, x, y, c);        // east                 Moves eastward, or bangs.
-  else if (op == 'f') op_f(g, x, y);           // if(a b)              Bangs if inputs are equal.
-  else if (op == 'g') op_g(g, x, y);           // generator(x y len)   Writes operands with offset.
-  else if (op == 'h') op_h(g, x, y);           // halt                 Halts southward operand.
-  else if (op == 'i') op_i(g, x, y);           // increment(step mod)  Increments southward operand.
-  else if (op == 'j') op_j(g, x, y, c);        // jumper(val)          Outputs northward operand.
-  else if (op == 'k') op_k(g, x, y);           // konkat(len)          Reads multiple variables.
-  else if (op == 'l') op_l(g, x, y);           // less(a b)            Outputs smallest of inputs.
-  else if (op == 'm') op_m(g, x, y);           // multiply(a b)        Outputs product of inputs.
-  else if (op == 'n') op_n(g, x, y, c);        // north                Moves Northward, or bangs.
-  else if (op == 'o') op_o(g, x, y);           // read(x y read)       Reads operand with offset.
-  else if (op == 'p') op_p(g, x, y);           // push(len key val)    Writes eastward operand.
-  else if (op == 'q') op_q(g, x, y);           // query(x y len)       Reads operands with offset.
-  else if (op == 'r') op_r(g, x, y);           // random(min max)      Outputs random value.
-  else if (op == 's') op_s(g, x, y, c);        // south                Moves southward, or bangs.
-  else if (op == 't') op_t(g, x, y);           // track(key len val)   Reads eastward operand.
-  else if (op == 'u') op_u(g, x, y);           // uclid(step max)      Bangs on Euclidean rhythm.
-  else if (op == 'v') op_v(g, x, y);           // variable(write read) Reads and writes variable.
-  else if (op == 'w') op_w(g, x, y, c);        // west                 Moves westward, or bangs.
-  else if (op == 'x') op_x(g, x, y);           // write(x y val)       Writes operand with offset.
-  else if (op == 'y') op_y(g, x, y, c);        // jymper(val)          Outputs westward operand.
-  else if (op == 'z') op_z(g, x, y);           // lerp(rate target)    Transitions operand to input.
+  if      (op == 'A') op_a(g, x, y);           // add(a b)             Outputs sum of inputs.
+  else if (op == 'B') op_b(g, x, y);           // subtract(a b)        Outputs difference of inputs.
+  else if (op == 'C') op_c(g, x, y);           // clock(rate mod)      Outputs modulo of frame.
+  else if (op == 'D') op_d(g, x, y);           // delay(rate mod)      Bangs on modulo of frame.
+  else if (op == 'E') op_e(g, x, y, op);        // east                 Moves eastward, or bangs.
+  else if (op == 'F') op_f(g, x, y);           // if(a b)              Bangs if inputs are equal.
+  else if (op == 'G') op_g(g, x, y);           // generator(x y len)   Writes operands with offset.
+  else if (op == 'H') op_h(g, x, y);           // halt                 Halts southward operand.
+  else if (op == 'I') op_i(g, x, y);           // increment(step mod)  Increments southward operand.
+  else if (op == 'J') op_j(g, x, y, op);        // jumper(val)          Outputs northward operand.
+  else if (op == 'K') op_k(g, x, y);           // konkat(len)          Reads multiple variables.
+  else if (op == 'L') op_l(g, x, y);           // less(a b)            Outputs smallest of inputs.
+  else if (op == 'M') op_m(g, x, y);           // multiply(a b)        Outputs product of inputs.
+  else if (op == 'N') op_n(g, x, y, op);        // north                Moves Northward, or bangs.
+  else if (op == 'O') op_o(g, x, y);           // read(x y read)       Reads operand with offset.
+  else if (op == 'P') op_p(g, x, y);           // push(len key val)    Writes eastward operand.
+  else if (op == 'Q') op_q(g, x, y);           // query(x y len)       Reads operands with offset.
+  else if (op == 'R') op_r(g, x, y);           // random(min max)      Outputs random value.
+  else if (op == 'S') op_s(g, x, y, op);        // south                Moves southward, or bangs.
+  else if (op == 'T') op_t(g, x, y);           // track(key len val)   Reads eastward operand.
+  else if (op == 'U') op_u(g, x, y);           // uclid(step max)      Bangs on Euclidean rhythm.
+  else if (op == 'V') op_v(g, x, y);           // variable(write read) Reads and writes variable.
+  else if (op == 'W') op_w(g, x, y, op);        // west                 Moves westward, or bangs.
+  else if (op == 'X') op_x(g, x, y);           // write(x y val)       Writes operand with offset.
+  else if (op == 'Y') op_y(g, x, y, op);        // jymper(val)          Outputs westward operand.
+  else if (op == 'Z') op_z(g, x, y);           // lerp(rate target)    Transitions operand to input.
   else if (op == '*') set_cell(g, x, y, '.');  // bang                 Bangs neighboring operands.
   else if (op == '#') op_comment(g, x, y);     // comment              Halts a line.
   else if (op == ':') op_midi(g, x, y);        // midi                 Sends a MIDI note.
-  else                     printf("Unknown operator[%d,%d]: %c\n", x, y, c);
+  else                     printf("Unknown operator[%d,%d]: %c\n", x, y, op);
 }
 
 // add(a b); Outputs sum of inputs.
@@ -647,7 +646,7 @@ op_midi(Grid* g, int x, int y)
   int note     =      get_port(g, x + 3, y, true);  if (cisp(note))         return;
   int velocity =      get_port(g, x + 4, y, true);  if (velocity    == '.') velocity = 'z';
   int length   =      get_port(g, x + 5, y, true);
-  if (get_bang(g, x, y)) {
+  if (bangged(g, x, y)) {
     send_midi(clamp(channel, 0, VOICES - 1),
               12 * octave + ctbl(note),
               clamp(cb36(velocity), 0, N_VARS),
@@ -763,9 +762,9 @@ redraw(Uint32* dst)
   Rect* r = &cursor;
   for   (int y = 0; y < VER; y++) {
     for (int x = 0; x < HOR; x++) {
-      bool   sel    = x < r->x + r->w && 
-                      x >= r->x       && 
-                      y < r->y + r->h && 
+      bool   sel    = x <  r->x + r->w && 
+                      x >= r->x        && 
+                      y <  r->y + r->h && 
                       y >= r->y;
       Type   type   = get_type(&doc.grid, x, y);
       Uint8* letter = font[get_font(x, y, get_cell(&doc.grid, x, y), type, sel)];
@@ -880,13 +879,13 @@ select1(int x, int y, int w, int h)
       r.y != cursor.y || 
       r.w != cursor.w ||
       r.h != cursor.h) {
-	cursor = r;
+    cursor = r;
     redraw(pixels);
   }
 }
 
 void
-scale(int w, int h, int skip)
+scale(int w, int h, bool skip)
 {
   select1(cursor.x,
           cursor.y,
@@ -895,7 +894,7 @@ scale(int w, int h, int skip)
 }
 
 void
-move(int x, int y, int skip)
+move(int x, int y, bool skip)
 {
   select1(cursor.x + (x * (skip ? 4 : 1)),
           cursor.y + (y * (skip ? 4 : 1)),
@@ -964,7 +963,7 @@ cut_clip(Rect* r, char* c)
 }
 
 void
-paste_clip(Rect* r, char* c, int insert)
+paste_clip(Rect* r, char* c, bool insert)
 {
   char ch;
   int i = 0;
@@ -979,7 +978,7 @@ paste_clip(Rect* r, char* c, int insert)
 }
 
 void
-move_clip(Rect* r, char* c, int x, int y, int skip)
+move_clip(Rect* r, char* c, int x, int y, bool skip)
 {
   copy_clip(r, c);
   insert('.');
@@ -1009,9 +1008,9 @@ do_mouse(SDL_Event* event)
 void
 do_key(SDL_Event* event)
 {
-  int shift = SDL_GetModState() & KMOD_LSHIFT || SDL_GetModState() & KMOD_RSHIFT;
-  int ctrl  = SDL_GetModState() & KMOD_LCTRL  || SDL_GetModState() & KMOD_RCTRL;
-  int alt   = SDL_GetModState() & KMOD_LALT   || SDL_GetModState() & KMOD_RALT;
+  bool shift = SDL_GetModState() & KMOD_LSHIFT || SDL_GetModState() & KMOD_RSHIFT;
+  bool ctrl  = SDL_GetModState() & KMOD_LCTRL  || SDL_GetModState() & KMOD_RCTRL;
+  bool alt   = SDL_GetModState() & KMOD_LALT   || SDL_GetModState() & KMOD_RALT;
   if (ctrl) {
     if      (event->key.keysym.sym == SDLK_n)            make_doc(&doc, "untitled.orca");
     else if (event->key.keysym.sym == SDLK_r)            open_doc(&doc, doc.name);

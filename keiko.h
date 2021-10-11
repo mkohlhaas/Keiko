@@ -85,7 +85,7 @@ Rect      cursor;
 
 int WIDTH  = 8 * HOR + PAD * 8 * 2;
 int HEIGHT = 8 * (VER + 2) + PAD * 8 * 2;
-int BPM    = 128, DOWN = 0, ZOOM = 2, PAUSE = 0, GUIDES = 1, MODE = 0;
+int BPM    = 128, DOWN = 0, ZOOM = 2, PAUSE = 0, GUIDES = 1, MODE = 0;  // GUIDES = UI grid (dots), MODE = input mode
 
 Uint32 theme[] = { 0x000000, 0xFFFFFF, 0x72DEC2, 0x666666, 0xffb545 };
 
@@ -202,7 +202,7 @@ char*  scpy(char* src, char* dst, int len);
 char   get_cell(Grid* g, int x, int y);
 void   set_cell(Grid* g, int x, int y, char c);
 Type   get_type(Grid* g, int x, int y);
-void   set_type(Grid* g, int x, int y, int type);
+void   set_type(Grid* g, int x, int y, Type type);
 void   set_lock(Grid* g, int x, int y);
 void   set_port(Grid* g, int x, int y, char c);
 int    get_port(Grid* g, int x, int y, bool lock);
@@ -288,8 +288,8 @@ void save_doc(Document* d, char* name);
 void transform(Rect* r, char (*fn)(char));
 void set_option(int* i, int v);
 void select1(int x, int y, int w, int h);
-void scale(int w, int h, int skip);
-void move(int x, int y, int skip);
+void scale(int w, int h, bool skip);
+void move(int x, int y, bool skip);
 void reset();
 void comment(Rect* r);
 void insert(char c);
@@ -298,8 +298,8 @@ void select_option(int option);
 void quit();
 void copy_clip(Rect* r, char* c);
 void cut_clip(Rect* r, char* c);
-void paste_clip(Rect* r, char* c, int insert);
-void move_clip(Rect* r, char* c, int x, int y, int skip);
+void paste_clip(Rect* r, char* c, bool insert);
+void move_clip(Rect* r, char* c, int x, int y, bool skip);
 void do_mouse(SDL_Event* event);
 void do_key(SDL_Event* event);
 void do_text(SDL_Event* event);
