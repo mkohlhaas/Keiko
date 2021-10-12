@@ -9,11 +9,11 @@
 // ============================== Data Definitions ==============================  
 // ==============================================================================  
 
-#define HOR    35
-#define VER    25
-#define PAD     2
-#define VOICES 16
-#define DEVICE  0
+#define HOR     35
+#define VER     25
+#define PAD      2
+#define VOICES  16
+#define DEVICE   0
 
 #define SZ     (HOR * VER * 16)
 #define CLIPSZ (HOR * VER) + VER + 1
@@ -24,7 +24,7 @@ typedef unsigned int  Uint;
 
 typedef enum cell_type { NoOp, Comment, LeftInput, Operator, RightInput, Output, Selected, } Type;
 
-#define N_VARS 36
+#define N_VARS  36
 
 typedef struct
 {
@@ -39,7 +39,8 @@ typedef struct
   Type   type[MAXSZ];  // determines color representation
 } Grid;
 
-#define FILE_NAME_SIZE 256
+#define FILE_NAME_SIZE    256
+#define FILE_NAME_DEFAULT "untitled.orca"
 
 typedef struct
 {
@@ -85,7 +86,7 @@ Rect      cursor;
 
 int WIDTH  = 8 * HOR + PAD * 8 * 2;
 int HEIGHT = 8 * (VER + 2) + PAD * 8 * 2;
-int BPM    = 128, DOWN = 0, ZOOM = 2, PAUSE = 0, GUIDES = 1, MODE = 0;  // GUIDES = UI grid (dots), MODE = input mode
+int BPM    = 120, DOWN = 0, ZOOM = 2, PAUSE = 0, GUIDES = 1, MODE = 0;  // GUIDES = UI grid (dots), MODE = input mode
 
 Uint32 theme[] = { 0x000000, 0xFFFFFF, 0x72DEC2, 0x666666, 0xffb545 };
 
@@ -206,7 +207,7 @@ void   set_type(Grid* g, int x, int y, Type type);
 void   set_lock(Grid* g, int x, int y);
 void   set_port(Grid* g, int x, int y, char c);
 int    get_port(Grid* g, int x, int y, bool lock);
-bool   get_bang(Grid* g, int x, int y);
+bool   bangged(Grid* g, int x, int y);
 size_t get_list_length();
 bool   error(char* msg, const char* err);
 
@@ -272,11 +273,6 @@ void set_pixel(Uint32* dst, int x, int y, int color);
 void draw_icon(Uint32* dst, int x, int y, Uint8* icon, int fg, int bg);
 void draw_ui(Uint32* dst);
 void redraw(Uint32* dst);
-bool create_window();
-bool create_renderer();
-bool create_texture();
-bool create_pixelbufer();
-bool create_ui();
 
 // =======================================================================
 // ============================== Documents ==============================
@@ -295,18 +291,22 @@ void comment(Rect* r);
 void insert(char c);
 void frame();
 void select_option(int option);
-void quit();
 void copy_clip(Rect* r, char* c);
 void cut_clip(Rect* r, char* c);
 void paste_clip(Rect* r, char* c, bool insert);
 void move_clip(Rect* r, char* c, int x, int y, bool skip);
+
+// ==========================================================================  
+// ============================== Input & Init ==============================  
+// ==========================================================================  
+
 void do_mouse(SDL_Event* event);
 void do_key(SDL_Event* event);
 void do_text(SDL_Event* event);
+bool create_window();
+bool create_renderer();
+bool create_texture();
+bool create_pixelbufer();
+bool create_ui();
 bool init();
-
-// ==================================================================
-// ============================== Main ==============================
-// ==================================================================
-
-int main(int argc, char* argv[]);
+void quit();

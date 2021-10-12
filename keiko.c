@@ -1,255 +1,29 @@
 #include "keiko.h"
 
-// ==============================================================================  
-// ============================== Helper Functions ==============================  
-// ==============================================================================  
-
 int
-clamp(int val, int min, int max)
+main(int argc, char* argv[])
 {
-  return (val >= min) ? ((val <= max) ? val : max) : min;
-}
+  if (!init()) return error("Init", "Failure");
 
-// is c special character?
-bool
-cisp(char c)
-{
-  return c == '.' || c == ':' || c == '#' || c == '*';
-}
+  if      (argc == 1)                 make_doc(&doc, FILE_NAME_DEFAULT);
+  else if (!open_doc(&doc, argv[1]))  make_doc(&doc, argv[1]);
 
-// int 'v' to char
-// result has same case as 'c'
-char
-cchr(int v, char c)
-{
-  v = abs(v % N_VARS);
-  if (v >= 0 && v <= 9) return '0' + v;
-  return (c >= 'A' && c <= 'Z' ? 'A' : 'a') + v - 10;
-}
-
-// char to 0 <= int <= 35
-int
-cb36(char c)
-{
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
-  if (c >= 'a' && c <= 'z') return c - 'a' + 10;
-  return 0;
-}
-
-// to upper-case
-char
-cuca(char c)
-{
-  return c >= 'a' && c <= 'z' ? 'A' + c - 'a' : c;
-}
-
-// to lower-case
-char
-clca(char c)
-{
-  return c >= 'A' && c <= 'Z' ? 'a' + c - 'A' : c;
-}
-
-char
-cinc(char c)
-{
-  return cisp(c) ? c : cchr(cb36(c) + 1, c);
-}
-
-char
-cdec(char c)
-{
-  return cisp(c) ? c : cchr(cb36(c) - 1, c);
-}
-
-bool
-valid_position(Grid* g, int x, int y)
-{
-  return x >= 0 && x <= g->width - 1 && y >= 0 && y <= g->height - 1;
-}
-
-bool
-valid_character(char c)
-{
-  return cb36(c) || c == '0' || cisp(c);
-}
-
-// char to note (used in send_midi)
-int
-ctbl(char c)
-{
-  int notes[7] = { 0, 2, 4, 5, 7, 9, 11 };
-  if (c >= '0' && c <= '9') return c - '0';
-  bool sharp = c >= 'a' && c <= 'z';
-  int  uc    = sharp ? c - 'a' + 'A' : c;
-  int  deg   = uc <= 'B' ? 'G' - 'B' + uc - 'A' : uc - 'C';
-  return deg / 7 * 12 + notes[deg % 7] + sharp;
-}
-
-// string copy; len includes zero-terminal
-char*
-scpy(char* src, char* dst, int len)
-{
-  int i = 0;
-  while ((dst[i] = src[i]) && i < len - 2) i++;
-  dst[i + 1] = '\0';
-  return dst;
-}
-
-char
-get_cell(Grid* g, int x, int y)
-{
-  if (valid_position(g, x, y)) return g->data[x + (y * g->width)];
-  return '.';
-}
-
-void
-set_cell(Grid* g, int x, int y, char c)
-{
-  if (valid_position(g, x, y) && valid_character(c))
-    g->data[x + (y * g->width)] = c;
-}
-
-Type
-get_type(Grid* g, int x, int y)
-{
-  if (valid_position(g, x, y))
-    return g->type[x + (y * g->width)];
-  return NoOp;
-}
-
-// set cell's coloring
-void
-set_type(Grid* g, int x, int y, Type type)
-{
-  if (valid_position(g, x, y))
-    g->type[x + (y * g->width)] = type;
-}
-
-// deactivate cell (cell contains number/value but not operator)
-void
-set_lock(Grid* g, int x, int y)
-{
-  if (valid_position(g, x, y)) {
-    g->lock[x + (y * g->width)] = true;
-    if (get_type(g, x, y) != NoOp)
-        set_type(g, x, y, Comment);
-  }
-}
-
-// set operator's output
-void
-set_port(Grid* g, int x, int y, char c)
-{
-  set_lock(g, x, y);          // output is a value; will not turn into an operator
-  set_type(g, x, y, Output);
-  set_cell(g, x, y, c);
-}
-
-// get operator's input
-int
-get_port(Grid* g, int x, int y, bool lock)
-{
-  if (lock) {
-    set_lock(g, x, y);              // right-hand side of operator cannot be an operator
-    set_type(g, x, y, RightInput);
-  } else
-    set_type(g, x, y, LeftInput);
-  return get_cell(g, x, y);
-}
-
-bool
-bangged(Grid* g, int x, int y)
-{
-  return get_cell(g, x - 1, y    ) == '*' ||
-         get_cell(g, x + 1, y    ) == '*' ||
-         get_cell(g, x    , y - 1) == '*' ||
-         get_cell(g, x    , y + 1) == '*';
-}
-
-size_t
-get_list_length()
-{
-  size_t    n    = 0;
-  MidiList* list = voices;
-  while (list) { n++; list = list->next; }
-  return n;
-}
-
-bool
-error(char* msg, const char* err)
-{
-  printf("Error %s: %s\n", msg, err);
-  return false;
-}
-
-// ==================================================================  
-// ============================== MIDI ==============================  
-// ==================================================================  
-
-int
-process(jack_nframes_t n_frames, void* arg)
-{
-  MidiList*         note_to_delete;
-  jack_midi_data_t* buffer;
-  void*             port_buf = jack_port_get_buffer(output_port, 1);
-  jack_midi_clear_buffer(port_buf);
-
-  MidiList* iter = voices;
-  while (iter->next) {
-    MidiNote* n = &iter->next->note;
-    if (n->trigger) {
-      n->trigger = false;
-      buffer     = jack_midi_event_reserve(port_buf, 0, 3);
-      buffer[0]  = 0x90 + n->channel;
-      buffer[1]  = n->value;
-      buffer[2]  = n->velocity;
-    } else {
-      n->length -= n_frames;
-      if (n->length < 0) {
-        buffer         = jack_midi_event_reserve(port_buf, 0, 3);
-        buffer[0]      = 0x80 + n->channel;
-        buffer[1]      = n->value;
-        buffer[2]      = 0;
-        note_to_delete = iter->next;
-        iter->next     = iter->next->next;
-        free(note_to_delete);
-        continue;
-      }
+  while (true) {
+    double start, elapsed;
+    SDL_Event event;
+    elapsed = (SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency() * 1000.0f;
+    if (!PAUSE && elapsed > 60000.0 / BPM) { frame(); start = SDL_GetPerformanceCounter(); }
+    SDL_Delay(clamp(16.666f - elapsed, 0, 1000));  // can reduce CPU load
+    while (SDL_PollEvent(&event)) {
+      if      (event.type == SDL_QUIT)            quit();
+      else if (event.type == SDL_MOUSEBUTTONUP)   do_mouse(&event);
+      else if (event.type == SDL_MOUSEBUTTONDOWN) do_mouse(&event);
+      else if (event.type == SDL_MOUSEMOTION)     do_mouse(&event);
+      else if (event.type == SDL_KEYDOWN)         do_key(&event);
+      else if (event.type == SDL_TEXTINPUT)       do_text(&event);
+      else if (event.type == SDL_WINDOWEVENT)     { if (event.window.event == SDL_WINDOWEVENT_EXPOSED) redraw(pixels); }
     }
-    iter = iter->next;
   }
-  return 0;
-}
-
-void
-send_midi(int channel, int value, int velocity, int length)
-{
-  MidiList* ml      = malloc(sizeof *ml);
-  ml->next          = voices->next;
-  voices->next      = ml;
-  ml->note.channel  = channel;
-  ml->note.value    = value;
-  ml->note.velocity = velocity * 3;
-  ml->note.length   = length * ( 60 / (float)BPM ) * jack_get_sample_rate(client);
-  ml->note.trigger  = true;
-}
-
-bool
-init_midi()
-{
-  if (!(client = jack_client_open("Keiko", JackNullOption, NULL)))
-    return error("Jack", "JACK server not running?\n");
-  printf("Jack client: %p\n", client);
-  jack_set_process_callback(client, process, 0);
-  output_port = jack_port_register(client, "midi-out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
-  if (jack_activate(client))
-    return error("Jack", "cannot activate client");
-  voices       = malloc(sizeof *voices);
-  voices->next = NULL;
-  voices->note = (MidiNote){};
-  return true;
 }
 
 // =======================================================================  
@@ -657,6 +431,258 @@ op_midi(Grid* g, int x, int y)
     set_type(g, x, y, LeftInput);
 }
 
+// ==============================================================================  
+// ============================== Helper Functions ==============================  
+// ==============================================================================  
+
+int
+clamp(int val, int min, int max)
+{
+  return (val >= min) ? ((val <= max) ? val : max) : min;
+}
+
+// is c special character?
+bool
+cisp(char c)
+{
+  return c == '.' || c == ':' || c == '#' || c == '*';
+}
+
+// int 'v' to char
+// result has same case as 'c'
+char
+cchr(int v, char c)
+{
+  v = abs(v % N_VARS);
+  if (v >= 0 && v <= 9) return '0' + v;
+  return (c >= 'A' && c <= 'Z' ? 'A' : 'a') + v - 10;
+}
+
+// char to 0 <= int <= 35
+int
+cb36(char c)
+{
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+  return 0;
+}
+
+// to upper-case
+char
+cuca(char c)
+{
+  return c >= 'a' && c <= 'z' ? 'A' + c - 'a' : c;
+}
+
+// to lower-case
+char
+clca(char c)
+{
+  return c >= 'A' && c <= 'Z' ? 'a' + c - 'A' : c;
+}
+
+char
+cinc(char c)
+{
+  return cisp(c) ? c : cchr(cb36(c) + 1, c);
+}
+
+char
+cdec(char c)
+{
+  return cisp(c) ? c : cchr(cb36(c) - 1, c);
+}
+
+bool
+valid_position(Grid* g, int x, int y)
+{
+  return x >= 0 && x <= g->width - 1 && y >= 0 && y <= g->height - 1;
+}
+
+bool
+valid_character(char c)
+{
+  return cb36(c) || c == '0' || cisp(c);
+}
+
+// char to note (used in send_midi)
+int
+ctbl(char c)
+{
+  int notes[7] = { 0, 2, 4, 5, 7, 9, 11 };
+  if (c >= '0' && c <= '9') return c - '0';
+  bool sharp = c >= 'a' && c <= 'z';
+  int  uc    = sharp ? c - 'a' + 'A' : c;
+  int  deg   = uc <= 'B' ? 'G' - 'B' + uc - 'A' : uc - 'C';
+  return deg / 7 * 12 + notes[deg % 7] + sharp;
+}
+
+// string copy; len includes zero-terminal
+char*
+scpy(char* src, char* dst, int len)
+{
+  int i = 0;
+  while ((dst[i] = src[i]) && i < len - 2) i++;
+  dst[i + 1] = '\0';
+  return dst;
+}
+
+char
+get_cell(Grid* g, int x, int y)
+{
+  if (valid_position(g, x, y)) return g->data[x + (y * g->width)];
+  return '.';
+}
+
+void
+set_cell(Grid* g, int x, int y, char c)
+{
+  if (valid_position(g, x, y) && valid_character(c))
+    g->data[x + (y * g->width)] = c;
+}
+
+Type
+get_type(Grid* g, int x, int y)
+{
+  if (valid_position(g, x, y))
+    return g->type[x + (y * g->width)];
+  return NoOp;
+}
+
+// set cell's coloring
+void
+set_type(Grid* g, int x, int y, Type type)
+{
+  if (valid_position(g, x, y))
+    g->type[x + (y * g->width)] = type;
+}
+
+// deactivate cell (cell contains number/value but not operator)
+void
+set_lock(Grid* g, int x, int y)
+{
+  if (valid_position(g, x, y)) {
+    g->lock[x + (y * g->width)] = true;
+    if (get_type(g, x, y) != NoOp)
+        set_type(g, x, y, Comment);
+  }
+}
+
+// set operator's output
+void
+set_port(Grid* g, int x, int y, char c)
+{
+  set_lock(g, x, y);          // output is a value; will not turn into an operator
+  set_type(g, x, y, Output);
+  set_cell(g, x, y, c);
+}
+
+// get operator's input
+int
+get_port(Grid* g, int x, int y, bool lock)
+{
+  if (lock) {
+    set_lock(g, x, y);              // right-hand side of operator cannot be an operator
+    set_type(g, x, y, RightInput);
+  } else
+    set_type(g, x, y, LeftInput);
+  return get_cell(g, x, y);
+}
+
+bool
+bangged(Grid* g, int x, int y)
+{
+  return get_cell(g, x - 1, y    ) == '*' ||
+         get_cell(g, x + 1, y    ) == '*' ||
+         get_cell(g, x    , y - 1) == '*' ||
+         get_cell(g, x    , y + 1) == '*';
+}
+
+size_t
+get_list_length()
+{
+  size_t    n    = 0;
+  MidiList* list = voices;
+  while (list) { n++; list = list->next; }
+  return n;
+}
+
+bool
+error(char* msg, const char* err)
+{
+  printf("Error %s: %s\n", msg, err);
+  return false;
+}
+
+// ==================================================================  
+// ============================== MIDI ==============================  
+// ==================================================================  
+
+int
+process(jack_nframes_t n_frames, void* arg)
+{
+  MidiList*         note_to_delete;
+  jack_midi_data_t* buffer;
+  void*             port_buf = jack_port_get_buffer(output_port, 1);
+  jack_midi_clear_buffer(port_buf);
+
+  MidiList* iter = voices;
+  while (iter->next) {
+    MidiNote* n = &iter->next->note;
+    if (n->trigger) {
+      n->trigger = false;
+      buffer     = jack_midi_event_reserve(port_buf, 0, 3);
+      buffer[0]  = 0x90 + n->channel;
+      buffer[1]  = n->value;
+      buffer[2]  = n->velocity;
+    } else {
+      n->length -= n_frames;
+      if (n->length < 0) {
+        buffer         = jack_midi_event_reserve(port_buf, 0, 3);
+        buffer[0]      = 0x80 + n->channel;
+        buffer[1]      = n->value;
+        buffer[2]      = 0;
+        note_to_delete = iter->next;
+        iter->next     = iter->next->next;
+        free(note_to_delete);
+        continue;
+      }
+    }
+    iter = iter->next;
+  }
+  return 0;
+}
+
+void
+send_midi(int channel, int value, int velocity, int length)
+{
+  MidiList* ml      = malloc(sizeof *ml);
+  ml->next          = voices->next;
+  voices->next      = ml;
+  ml->note.channel  = channel;
+  ml->note.value    = value;
+  ml->note.velocity = velocity * 3;
+  ml->note.length   = length * ( 60 / (float)BPM ) * jack_get_sample_rate(client);
+  ml->note.trigger  = true;
+}
+
+bool
+init_midi()
+{
+  if (!(client = jack_client_open("Keiko", JackNullOption, NULL)))
+    return error("Jack", "JACK server not running?\n");
+  printf("Jack client: %p\n", client);
+  jack_set_process_callback(client, process, 0);
+  output_port = jack_port_register(client, "midi-out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+  if (jack_activate(client))
+    return error("Jack", "cannot activate client");
+  voices       = malloc(sizeof *voices);
+  voices->next = NULL;
+  voices->note = (MidiNote){};
+  return true;
+}
+
 // =======================================================================
 // ============================== Debugging ==============================
 // =======================================================================
@@ -987,6 +1013,10 @@ move_clip(Rect* r, char* c, int x, int y, bool skip)
   paste_clip(r, c, 0);
 }
 
+// ==========================================================================  
+// ============================== Input & Init ==============================  
+// ==========================================================================  
+
 void
 do_mouse(SDL_Event* event)
 {
@@ -1013,7 +1043,7 @@ do_key(SDL_Event* event)
   bool ctrl  = SDL_GetModState() & KMOD_LCTRL  || SDL_GetModState() & KMOD_RCTRL;
   bool alt   = SDL_GetModState() & KMOD_LALT   || SDL_GetModState() & KMOD_RALT;
   if (ctrl) {
-    if      (event->key.keysym.sym == SDLK_n)            make_doc(&doc, "untitled.orca");
+    if      (event->key.keysym.sym == SDLK_n)            make_doc(&doc, FILE_NAME_DEFAULT);
     else if (event->key.keysym.sym == SDLK_r)            open_doc(&doc, doc.name);
     else if (event->key.keysym.sym == SDLK_s)            save_doc(&doc, doc.name);
     else if (event->key.keysym.sym == SDLK_h)            set_option(&GUIDES, !GUIDES);
@@ -1034,8 +1064,8 @@ do_key(SDL_Event* event)
     else if (event->key.keysym.sym == SDLK_q)            quit();
   } else {
     if 	    (event->key.keysym.sym == SDLK_ESCAPE)       reset();
-    else if (event->key.keysym.sym == SDLK_PAGEUP)       set_option(&BPM, BPM + 1);
-    else if (event->key.keysym.sym == SDLK_PAGEDOWN)     set_option(&BPM, BPM - 1);
+    else if (event->key.keysym.sym == SDLK_PAGEUP)       set_option(&BPM, clamp(BPM + (alt ? 10 : 1), 1, 999));
+    else if (event->key.keysym.sym == SDLK_PAGEDOWN)     set_option(&BPM, clamp(BPM - (alt ? 10 : 1), 1, 999));
     else if (event->key.keysym.sym == SDLK_UP)           shift ? scale( 0, -1, alt) : move( 0, -1, alt);
     else if (event->key.keysym.sym == SDLK_DOWN)         shift ? scale( 0,  1, alt) : move( 0,  1, alt);
     else if (event->key.keysym.sym == SDLK_LEFT)         shift ? scale(-1,  0, alt) : move(-1,  0, alt);
@@ -1108,38 +1138,4 @@ quit()
   SDL_Quit();
   jack_client_close(client);
   exit(0);
-}
-
-// ==================================================================  
-// ============================== Main ==============================  
-// ==================================================================  
-
-int
-main(int argc, char* argv[])
-{
-  Uint8 tick = 0;
-  if (!init()) return error("Init", "Failure");
-  if (argc > 1) {
-    if (!open_doc(&doc, argv[1])) make_doc(&doc, argv[1]);
-  } else make_doc(&doc, "untitled.orca");
-
-  while (true) {
-    SDL_Event event;
-    double elapsed, start = SDL_GetPerformanceCounter();
-    if (!PAUSE) {
-      if   (tick > 7) { frame(); tick = 0; } 
-      else            { tick++; }
-    }
-    elapsed = (SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency() * 1000.0f;
-    SDL_Delay(clamp(16.666f - elapsed, 0, 1000));
-    while (SDL_PollEvent(&event) != 0) {
-      if      (event.type == SDL_QUIT)            quit();
-      else if (event.type == SDL_MOUSEBUTTONUP)   do_mouse(&event);
-      else if (event.type == SDL_MOUSEBUTTONDOWN) do_mouse(&event);
-      else if (event.type == SDL_MOUSEMOTION)     do_mouse(&event);
-      else if (event.type == SDL_KEYDOWN)         do_key(&event);
-      else if (event.type == SDL_TEXTINPUT)       do_text(&event);
-      else if (event.type == SDL_WINDOWEVENT)     { if (event.window.event == SDL_WINDOWEVENT_EXPOSED) redraw(pixels); }
-    }
-  }
 }
