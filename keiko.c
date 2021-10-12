@@ -239,8 +239,9 @@ send_midi(int channel, int value, int velocity, int length)
 bool
 init_midi()
 {
-  if ((client = jack_client_open("Keiko", JackNullOption, NULL)) == 0)
+  if (!(client = jack_client_open("Keiko", JackNullOption, NULL)))
     return error("Jack", "JACK server not running?\n");
+  printf("Jack client: %p\n", client);
   jack_set_process_callback(client, process, 0);
   output_port = jack_port_register(client, "midi-out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
   if (jack_activate(client))
@@ -276,7 +277,7 @@ run_grid(Grid* g)
     else if (c >= 'a' && c <= 'z' && !bangged(g, x, y)) continue;
     else                                                operate(g, x, y, c);
   }
-  print_lock_grid(g);
+  // print_lock_grid(g);
   g->frame++;
 }
 
